@@ -1,4 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import LayerControl from "../components/workspace/LayerControl";
+import EmptyStateWorkspace from "../components/workspace/EmptyStateWorkspace";
+import ChatPanel from "../components/workspace/ChatPanel";
+import MapViewer from "../components/MapViewer";
 import GeospatialHero from "../components/geospatial/GeospatialHero";
 import QueryComposer from "../components/geospatial/QueryComposer";
 import ExampleChips from "../components/geospatial/ExampleChips";
@@ -6,18 +10,80 @@ import AgenticRoutingModal from "../components/geospatial/AgenticRoutingModal";
 import AnalysisResultWorkspace from "../components/geospatial/AnalysisResultWorkspace";
 import { useTheme } from "../context/ThemeContext";
 import { resolveAnalysisRouting } from "../mock/geospatialAnalyses";
+import {
+  Maximize2,
+  Minimize2,
+  ChevronDown,
+  Search,
+  Filter,
+  Calendar,
+  Sparkles,
+  Crosshair,
+  Info,
+  MapPin,
+  X,
+} from "lucide-react";
 
 export default function GeospatialAnalysis() {
-const { theme } = useTheme();
-  const isDark = theme === "dark";
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [searchLocationOpen, setSearchLocationOpen] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterOpen, setFilterOpen] = useState(false);
 
-  // Application state flow: 'idle' (New Analysis) | 'analyzing' | 'result'
-  const [pageState, setPageState] = useState("idle");
+  // Date selection states
+  const [t1Date, setT1Date] = useState("");
+  const [t2Date, setT2Date] = useState("");
+  const [showT1Picker, setShowT1Picker] = useState(false);
+  const [showT2Picker, setShowT2Picker] = useState(false);
 
-  // Query & attachments state
-  const [query, setQuery] = useState("");
-  const [attachedFiles, setAttachedFiles] = useState([]);
+  // Layer states
+  const [baseImagery, setBaseImagery] = useState("optical");
+  const [indexLayers, setIndexLayers] = useState({
+    ndvi: false,
+    ndwi: false,
+    ndbi: false,
+    ndmi: false,
+  });
+  const [vectorLayers, setVectorLayers] = useState({
+    floodRisk: false,
+    adminBoundary: false,
+    roads: false,
+    waterBodies: false,
+  });
+  const [otherLayers, setOtherLayers] = useState({
+    cloudMask: false,
+  });
+
+  // Assistant Query Input & Pipeline Results
+  const [assistantInput, setAssistantInput] = useState("");
+  const [pipelineOverlay, setPipelineOverlay] = useState(null);
   const [pipelineBbox, setPipelineBbox] = useState(null);
+
+  // Dropdown & popover refs for outside click dismissal
+  const locationDropdownRef = useRef(null);
+  const t1PickerRef = useRef(null);
+  const t2PickerRef = useRef(null);
+  const filterRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (locationDropdownRef.current && !locationDropdownRef.current.contains(event.target)) {
+        setSearchLocationOpen(false);
+      }
+      if (t1PickerRef.current && !t1PickerRef.current.contains(event.target)) {
+        setShowT1Picker(false);
+      }
+      if (t2PickerRef.current && !t2PickerRef.current.contains(event.target)) {
+        setShowT2Picker(false);
+      }
+      if (filterRef.current && !filterRef.current.contains(event.target)) {
+        setFilterOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const presetLocations = [
     { id: "assam", name: "Brahmaputra Basin, Assam", coords: "26.2006° N, 92.9376° E", lon: 92.9376, lat: 26.2006 },
@@ -37,6 +103,7 @@ const { theme } = useTheme();
         selectedLocation.lat + pad,
       ]
     : null;
+
   const selectedOverlay = selectedLocation
     ? {
         type: "FeatureCollection",
@@ -62,36 +129,24 @@ const { theme } = useTheme();
   const handleToggleIndexLayer = (key) => {
     setIndexLayers((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+
+  const handleToggleVectorLayer = (key) => {
+    setVectorLayers((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const handleRemoveFile = (fileIdentifier) => {
-    setAttachedFiles((prev) =>
-      prev.filter((f) => f.id !== fileIdentifier && f.name !== fileIdentifier)
-    );
+  const handleToggleOtherLayer = (key) => {
+    setOtherLayers((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Click on Example Question Chip
-  const handleSelectExample = (example) => {
-    setQuery(example.text);
-    if (example.pairPreset) {
-      setAttachedFiles([
-        {
-          id: `${example.pairPreset.id}-1`,
-          name: example.pairPreset.file1.name,
-          size: example.pairPreset.file1.size,
-          modality: example.pairPreset.file1.type,
-          baseImage: example.pairPreset.baseImage,
-        },
-        {
-          id: `${example.pairPreset.id}-2`,
-          name: example.pairPreset.file2.name,
-          size: example.pairPreset.file2.size,
-          modality: example.pairPreset.file2.type,
-          baseImage: example.pairPreset.resultImage,
-        },
-      ]);
-    } else if (example.sampleImages && example.sampleImages.length > 0) {
-      setAttachedFiles(example.sampleImages);
+const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+      setIsFullscreen(true);
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+      setIsFullscreen(false);
     }
   };
 
@@ -99,30 +154,107 @@ const { theme } = useTheme();
   const handleSubmitAnalysis = () => {
     if (!query.trim() && attachedFiles.length === 0) return;
 
-    // Transition to STATE 2: ANALYZING
-    setPageState("analyzing");
+        {/* Open in Fullscreen Button */}
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className="flex items-center space-x-2 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 dark:border-dark-border dark:bg-dark-card dark:text-slate-200 dark:hover:bg-dark-hover"
+        >
+          {isFullscreen ? (
+            <>
+              <Minimize2 className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
+              <span>Exit Fullscreen</span>
+            </>
+          ) : (
+            <>
+              <Maximize2 className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
+              <span>Open in Fullscreen</span>
+            </>
+          )}
+        </button>
+      </div>
 
-    // Automatically resolve workflow using intelligent router
-    const resolvedResult = resolveAnalysisRouting(query, attachedFiles);
-    setCurrentAnalysis(resolvedResult);
-  };
+      {/* 2. Map and Search Interface (middle) */}
+      <div className="flex flex-col gap-4 w-full">
+        {/* Search & Analysis Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Left Toolbar Controls: Location Dropdown + Search Input + Filter */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Location Dropdown */}
+            <div className="relative" ref={locationDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setSearchLocationOpen(!searchLocationOpen)}
+                className="flex items-center space-x-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50 dark:border-dark-border dark:bg-dark-card dark:text-slate-200 dark:hover:bg-dark-hover"
+              >
+                <span>{selectedLocation ? selectedLocation.name.split(",")[0] : "Search Location"}</span>
+                <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+              </button>
 
-  // Completion callback from AgenticRoutingModal
-  const handleAgenticComplete = () => {
-    // Transition to STATE 3: RESULTS
-    setPageState("result");
-  };
+              {searchLocationOpen && (
+                <div className="absolute left-0 top-full z-30 mt-1.5 w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 dark:border-dark-border dark:bg-dark-card">
+                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    Select Preset Location
+                  </div>
+                  <div className="max-h-56 overflow-y-auto space-y-1">
+                    {presetLocations.map((loc) => (
+                      <button
+                        key={loc.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedLocation(loc);
+                          setSearchQuery(loc.name);
+                          setSearchLocationOpen(false);
+                        }}
+                        className="flex w-full items-start space-x-2 rounded-lg px-2.5 py-2 text-left text-xs transition hover:bg-slate-100 dark:hover:bg-dark-hover"
+                      >
+                        <MapPin className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-brand-600 dark:text-brand-400" />
+                        <div>
+                          <p className="font-medium text-slate-800 dark:text-slate-200">{loc.name}</p>
+                          <p className="text-[10px] text-slate-400">{loc.coords}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
-  // Reset to clean New Chat landing screen
-  const handleResetToNewChat = () => {
-    setPageState("idle");
-    setQuery("");
-    setAttachedFiles([]);
-    setCurrentAnalysis(null);
-  };
+            {/* Search Input Field */}
+            <div className="relative flex w-64 items-center sm:w-80">
+              <input
+                type="text"
+                placeholder="Search for a place or area..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-3.5 pr-8 text-xs text-slate-800 placeholder-slate-400 shadow-2xs transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-dark-border dark:bg-dark-card dark:text-slate-100"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setSelectedLocation(null);
+                  }}
+                  className="absolute right-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : (
+                <Search className="pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-slate-400" />
+              )}
+            </div>
 
-  // Dynamic Earth graphic: night city lights with cyan limb in dark mode, daylight globe in light mode
-  const earthImageSrc = isDark ? "/satellite/earth_night_curve.jpg" : "/satellite/earth_globe_curve.jpg";
+            {/* Filter Button */}
+            <div className="relative" ref={filterRef}>
+              <button
+                type="button"
+                onClick={() => setFilterOpen(!filterOpen)}
+                className="flex h-8.5 w-8.5 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-2xs transition hover:bg-slate-50 dark:border-dark-border dark:bg-dark-card dark:text-slate-300 dark:hover:bg-dark-hover"
+                title="Filter Settings"
+              >
+                <Filter className="h-3.5 w-3.5" />
+              </button>
 
   return (
     <div className="relative min-h-[calc(100vh-4rem)] flex-1 w-full flex flex-col items-center justify-center overflow-hidden">
@@ -155,35 +287,116 @@ const { theme } = useTheme();
               </div>
             )}
 
- feature/phase7-e2e-integration
-        {/* Center Column: OpenLayers GIS client */}
-        <div className="relative flex-1 min-w-0">
-          <MapViewer
-            geojsonOverlay={pipelineOverlay || selectedOverlay}
-            bboxCoordinates={pipelineBbox || selectedBbox || [68.0, 6.5, 97.5, 35.5]}
-            baseImagery={baseImagery}
-            onBaseImageryChange={setBaseImagery}
-          />
-          {!selectedLocation && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-10 z-20 flex justify-center px-4">
-              <div className="pointer-events-auto max-h-[70%] max-w-xl overflow-y-auto rounded-2xl shadow-xl">
-                <EmptyStateWorkspace />
-              </div>
+              {showT1Picker && (
+                <div className="absolute right-0 top-full z-30 mt-1.5 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-dark-border dark:bg-dark-card">
+                  <p className="mb-1 text-[10px] font-semibold text-slate-400">Select T1 Date</p>
+                  <input
+                    type="date"
+                    onChange={(e) => {
+                      setT1Date(e.target.value);
+                      setShowT1Picker(false);
+                    }}
+                    className="w-full rounded border border-slate-200 p-1 text-xs dark:border-dark-border dark:bg-dark-bg dark:text-white"
+                  />
+                </div>
+              )}
             </div>
-          )}
+
+            <span className="text-xs font-bold text-slate-400 dark:text-slate-500">
+              vs
+            </span>
+
+            {/* T2 Date Selector */}
+            <div className="relative flex items-center rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 shadow-2xs dark:border-dark-border dark:bg-dark-card" ref={t2PickerRef}>
+              <span className="mr-2 rounded bg-brand-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-xs">
+                T2
+              </span>
+              <input
+                type="text"
+                readOnly
+                value={t2Date || "Select date"}
+                onClick={() => setShowT2Picker(!showT2Picker)}
+                className="w-20 cursor-pointer bg-transparent text-xs font-medium text-slate-700 focus:outline-none dark:text-slate-200"
+              />
+              <button
+                type="button"
+                onClick={() => setShowT2Picker(!showT2Picker)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <Calendar className="h-3.5 w-3.5" />
+              </button>
+
+              {showT2Picker && (
+                <div className="absolute right-0 top-full z-30 mt-1.5 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-dark-border dark:bg-dark-card">
+                  <p className="mb-1 text-[10px] font-semibold text-slate-400">Select T2 Date</p>
+                  <input
+                    type="date"
+                    onChange={(e) => {
+                      setT2Date(e.target.value);
+                      setShowT2Picker(false);
+                    }}
+                    className="w-full rounded border border-slate-200 p-1 text-xs dark:border-dark-border dark:bg-dark-bg dark:text-white"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Compare Button */}
+            <button
+              type="button"
+              className="flex items-center space-x-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50 dark:border-dark-border dark:bg-dark-card dark:text-slate-200 dark:hover:bg-dark-hover"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-brand-600 dark:text-brand-400" />
+              <span>Compare</span>
+            </button>
+          </div>
         </div>
 
-        {/* Right Column: AI Analysis Assistant (~430px) */}
-        <div className="w-full flex-shrink-0 lg:w-[430px]">
-          <ChatPanel
-            externalInput={assistantInput}
-            onInputChange={setAssistantInput}
-            onPipelineResult={(payload) => {
-              if (payload?.geojson) setPipelineOverlay(payload.geojson);
-              if (payload?.bbox) setPipelineBbox(payload.bbox);
-            }}
-          />
+        {/* Map Workspace with LayerControl */}
+        <div className="flex flex-col lg:flex-row gap-5 h-auto lg:h-[540px] w-full">
+          {/* Left Column: Data & Layers (~320px) */}
+          <div className="w-full flex-shrink-0 lg:w-80 h-[540px]">
+            <LayerControl
+              baseImagery={baseImagery}
+              onBaseImageryChange={setBaseImagery}
+              indexLayers={indexLayers}
+              onToggleIndexLayer={handleToggleIndexLayer}
+              vectorLayers={vectorLayers}
+              onToggleVectorLayer={handleToggleVectorLayer}
+              otherLayers={otherLayers}
+              onToggleOtherLayer={handleToggleOtherLayer}
+            />
+          </div>
+
+          {/* Center Column: OpenLayers GIS client */}
+          <div className="relative flex-1 min-w-0 h-[540px] rounded-2xl overflow-hidden border border-slate-200 dark:border-dark-border shadow-sm">
+            <MapViewer
+              geojsonOverlay={pipelineOverlay || selectedOverlay}
+              bboxCoordinates={pipelineBbox || selectedBbox || [68.0, 6.5, 97.5, 35.5]}
+              baseImagery={baseImagery}
+              onBaseImageryChange={setBaseImagery}
+            />
+            {!selectedLocation && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-10 z-20 flex justify-center px-4">
+                <div className="pointer-events-auto max-h-[70%] max-w-xl overflow-y-auto rounded-2xl shadow-xl">
+                  <EmptyStateWorkspace />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+      </div>
+
+      {/* 3. AI Analysis Assistant chat panel (bottom) */}
+      <div className="w-full">
+        <ChatPanel
+          externalInput={assistantInput}
+          onInputChange={setAssistantInput}
+          onPipelineResult={(payload) => {
+            if (payload?.geojson) setPipelineOverlay(payload.geojson);
+            if (payload?.bbox) setPipelineBbox(payload.bbox);
+          }}
+        />
       </div>
 
       {/* 4. Bottom Status Bar */}
@@ -213,33 +426,6 @@ const { theme } = useTheme();
             <span className="font-medium text-slate-800 dark:text-slate-200">
               {baseImagery === "optical" ? "Sentinel-2 (Optical)" : "Sentinel-1 (SAR)"}
             </span>
-
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium leading-relaxed">
-              {isDark ? (
-                <>
-                  Earth<br />
-                  Data for a<br />
-                  <span className="font-semibold text-slate-300">Brighter Tomorrow</span>
-                </>
-              ) : (
-                <>
-                  Satellite imagery.<br />
-                  Smarter decisions.<br />
-                  <span className="font-semibold text-slate-800">A better tomorrow.</span>
-                </>
-              )}
-            </div>
-            <svg
-              className="w-14 h-2.5 text-blue-500 mt-1"
-              viewBox="0 0 50 10"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            >
-              <path d="M 2 7 Q 25 10 48 3" />
-            </svg>
-main
           </div>
 
           {/* Central Hero Section */}
@@ -257,8 +443,7 @@ main
               isAnalyzing={false}
             />
 
-            {/* Example Question Suggestion Chips */}
-            <ExampleChips onSelectExample={handleSelectExample} />
+          <span className="hidden sm:inline text-slate-300 dark:text-slate-700">|</span>
 
           </div>
         </div>
@@ -283,7 +468,7 @@ main
             onResetToNewChat={handleResetToNewChat}
           />
         </div>
-      )}
+      </div>
     </div>
   );
 }
