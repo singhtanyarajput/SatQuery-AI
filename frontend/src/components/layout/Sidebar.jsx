@@ -49,7 +49,7 @@ export default function Sidebar({ isCollapsed }) {
   return (
     <>
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200 bg-white transition-all duration-300 dark:border-dark-border dark:bg-dark-sidebar ${
+        className={`relative z-40 flex flex-col h-full flex-shrink-0 border-r border-slate-200 bg-white transition-all duration-300 dark:border-dark-border dark:bg-dark-sidebar ${
           isCollapsed ? "w-20" : "w-64"
         }`}
       >

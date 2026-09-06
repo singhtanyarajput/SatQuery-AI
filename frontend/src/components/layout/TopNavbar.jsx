@@ -44,7 +44,7 @@ export default function TopNavbar({ onToggleSidebar, isSidebarCollapsed }) {
 
   return (
     <>
-      <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur-md transition-colors duration-200 dark:border-dark-border dark:bg-dark-card/95">
+      <header className="sticky top-0 z-30 flex h-16 w-full flex-shrink-0 items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur-md transition-colors duration-200 dark:border-dark-border dark:bg-dark-card/95">
         {/* Left Side: Collapse Toggle & Branding */}
         <div className="flex items-center space-x-3 sm:space-x-4">
           <button
