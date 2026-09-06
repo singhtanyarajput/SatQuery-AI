@@ -24,7 +24,7 @@ export default function AppLayout() {
           onOpenSidebar={() => setIsSidebarCollapsed(false)}
           isSidebarCollapsed={isSidebarCollapsed}
         />
- <main className={`flex-1 flex flex-col min-h-0 ${isWorkspace ? "p-0" : "p-4 sm:p-6 lg:p-8"}`}>
+        <main className={`flex-1 flex flex-col min-h-0 overflow-y-auto ${isWorkspace ? "p-0" : "p-4 sm:p-6 lg:p-8"}`}>
           <Outlet />
         </main>
       </div>

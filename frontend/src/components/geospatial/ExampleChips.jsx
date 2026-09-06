@@ -7,7 +7,7 @@ import {
   Leaf,
   Building2,
   MapPin,
-  ArrowRight,
+  Layers,
   FileText,
 } from "lucide-react";
 import { SAMPLE_PRESET_IMAGES, SAMPLE_PRESET_PAIRS } from "../../mock/geospatialAnalyses";
@@ -59,27 +59,16 @@ export default function ExampleChips({ onSelectExample }) {
   ];
 
   return (
-    <div className="w-full max-w-3xl mx-auto mt-4 sm:mt-5 text-left">
-      {/* Header Row: Try an example question + View all examples link */}
-      <div className="flex items-center justify-between mb-2.5 px-1">
-        <div className="flex items-center gap-2">
-          <Lightbulb className="w-4 h-4 text-amber-500 fill-amber-400/20" />
-          <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-            Try an example question
-          </span>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => onSelectExample(examples[0])}
-          className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline transition"
-        >
-          <span>View all examples</span>
-          <ArrowRight className="w-3.5 h-3.5" />
-        </button>
+    <div className="w-full max-w-4xl mx-auto mt-4 sm:mt-5 text-left">
+      {/* Header Row: Try an example question */}
+      <div className="flex items-center gap-2 mb-2.5 px-1">
+        <Lightbulb className="w-4 h-4 text-amber-500 fill-amber-400/20" />
+        <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+          Try an example question
+        </span>
       </div>
 
-      {/* Grid of Chips */}
+      {/* Grid of Chips (2 or 3 columns matching reference screenshot) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
         {examples.map((item) => {
           const Icon = item.icon;
@@ -103,8 +92,8 @@ export default function ExampleChips({ onSelectExample }) {
         })}
       </div>
 
-      {/* Subtle Supporting Format Note with Document icon */}
-      <div className="mt-3.5 text-center flex items-center justify-center gap-1.5 text-slate-500 dark:text-slate-400">
+      {/* Subtle Supporting Format Note */}
+      <div className="mt-4 text-center flex items-center justify-center gap-1.5 text-slate-500 dark:text-slate-400">
         <FileText className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 flex-shrink-0" />
         <p className="text-[11px] tracking-wide font-normal">
           Supports satellite imagery (GeoTIFF, TIFF, PNG, JPEG). Just upload and ask — SatQuery AI handles the rest.

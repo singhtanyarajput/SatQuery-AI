@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { NavLink, Link } from "react-router-dom";
+import { NavLink, Link, useLocation } from "react-router-dom";
 import {
   Map,
   FileText,
@@ -8,13 +8,9 @@ import {
   Server,
   LogOut,
   ChevronUp,
-  User,
-  Activity,
-  CheckCircle2,
-  HardDrive,
   Cpu,
+  Activity,
   X,
-  ExternalLink,
   Menu,
 } from "lucide-react";
 
@@ -22,6 +18,7 @@ export default function Sidebar({ isCollapsed, onToggle, onClose }) {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSystemModal, setShowSystemModal] = useState(false);
   const profileMenuRef = useRef(null);
+  const location = useLocation();
 
   // Close profile menu on outside click
   useEffect(() => {
@@ -39,6 +36,7 @@ export default function Sidebar({ isCollapsed, onToggle, onClose }) {
       name: "Geospatial AI Analysis",
       path: "/workspace",
       icon: Map,
+      highlight: true,
     },
     {
       name: "Reports & History",
@@ -118,35 +116,45 @@ export default function Sidebar({ isCollapsed, onToggle, onClose }) {
 
         {/* Main Nav Items */}
         <div className="flex flex-1 flex-col justify-between p-3.5 overflow-hidden">
-          <nav className="space-y-1.5">
+          <nav className="space-y-1">
             {mainNavItems.map((item) => {
               const Icon = item.icon;
+              // If this is Geospatial AI Analysis on /workspace or /, mark active
+              const isGeospatial = item.name === "Geospatial AI Analysis";
+              const isActive = isGeospatial
+                ? location.pathname === "/workspace" || location.pathname === "/"
+                : location.pathname === item.path && item.name !== "Dashboard";
+
               return (
                 <NavLink
-                  key={item.path}
+                  key={item.name}
                   to={item.path}
-                  className={({ isActive }) =>
-                    `group flex items-center rounded-xl px-3.5 py-3 text-sm font-medium transition-all duration-150 ${
-                      isActive
-                        ? "bg-brand-600 text-white shadow-sm shadow-brand-600/30 dark:bg-brand-600 dark:text-white"
-                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-dark-hover dark:hover:text-white"
-                    } ${isCollapsed ? "justify-center px-2" : "justify-between"}`
-                  }
+                  className={`group flex items-center rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all duration-150 ${
+                    isActive
+                      ? "bg-brand-600 text-white shadow-sm shadow-brand-600/30 dark:bg-brand-600 dark:text-white"
+                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-dark-hover dark:hover:text-white"
+                  } ${isCollapsed ? "justify-center px-2" : "justify-between"}`}
                   title={isCollapsed ? item.name : undefined}
                 >
                   <div className="flex items-center space-x-3">
-                    <Icon className="h-5 w-5 flex-shrink-0" />
+                    <Icon className="h-4.5 w-4.5 flex-shrink-0" />
                     {!isCollapsed && <span>{item.name}</span>}
                   </div>
+
+                  {!isCollapsed && item.badge && (
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-white shadow-2xs">
+                      {item.badge}
+                    </span>
+                  )}
                 </NavLink>
               );
             })}
           </nav>
         </div>
 
-        {/* Operator Profile Widget at Bottom of Sidebar (ChatGPT style) */}
+        {/* Operator Profile Widget at Bottom of Sidebar */}
         <div className="relative border-t border-slate-100 p-3 dark:border-dark-border" ref={profileMenuRef}>
-          {/* Popover Menu (opens upwards above the Operator button) */}
+          {/* Popover Menu */}
           {showProfileMenu && (
             <div
               className={`absolute bottom-full mb-2 ${
@@ -190,7 +198,7 @@ export default function Sidebar({ isCollapsed, onToggle, onClose }) {
                     setShowProfileMenu(false);
                     setShowSystemModal(true);
                   }}
-                  className="flex w-full items-center space-x-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-dark-hover transition"
+                  className="flex w-full items-center space-x-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-dark-hover transition cursor-pointer"
                 >
                   <Server className="h-4 w-4 text-brand-600 dark:text-brand-400" />
                   <span>System Status & Nodes</span>
@@ -201,7 +209,7 @@ export default function Sidebar({ isCollapsed, onToggle, onClose }) {
                 <button
                   type="button"
                   onClick={() => setShowProfileMenu(false)}
-                  className="flex w-full items-center space-x-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40 transition"
+                  className="flex w-full items-center space-x-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40 transition cursor-pointer"
                 >
                   <LogOut className="h-4 w-4 text-red-500" />
                   <span>Log out</span>
@@ -214,7 +222,7 @@ export default function Sidebar({ isCollapsed, onToggle, onClose }) {
           <button
             type="button"
             onClick={() => setShowProfileMenu(!showProfileMenu)}
-            className={`flex w-full items-center rounded-xl p-2 text-left transition hover:bg-slate-100 dark:hover:bg-dark-hover ${
+            className={`flex w-full items-center rounded-xl p-2 text-left transition hover:bg-slate-100 dark:hover:bg-dark-hover cursor-pointer ${
               isCollapsed ? "justify-center" : "justify-between space-x-3"
             }`}
             title={isCollapsed ? "Operator (Settings & Help)" : undefined}
@@ -264,7 +272,7 @@ export default function Sidebar({ isCollapsed, onToggle, onClose }) {
               <button
                 type="button"
                 onClick={() => setShowSystemModal(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-dark-hover"
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-dark-hover cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -306,7 +314,7 @@ export default function Sidebar({ isCollapsed, onToggle, onClose }) {
               <button
                 type="button"
                 onClick={() => setShowSystemModal(false)}
-                className="rounded-xl bg-brand-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-brand-700 shadow-sm"
+                className="rounded-xl bg-brand-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-brand-700 shadow-sm cursor-pointer"
               >
                 Close Diagnostics
               </button>
