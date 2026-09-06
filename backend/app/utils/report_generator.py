@@ -37,19 +37,28 @@ def build_audit_summary(
             except (TypeError, ValueError):
                 continue
     metadata = dict(data.get("input_metadata") or {})
+    std_task = data.get("task_type") or data.get("task")
     return {
         "trace_id": data.get("trace_id"),
+        "task_type": std_task,
         "selected_task": data.get("task"),
         "query": data.get("query"),
+        "models_executed": data.get("models_executed") or models,
         "model_names": models,
         "tool_names": models,
         "key_parameters": key_parameters,
+        "confidence": confidence_scores["overall"],
         "confidence_score": confidence_scores["overall"],
         "confidence_scores": confidence_scores,
+        "input_metadata": metadata,
         "crs": metadata.get("crs"),
         "bounds": metadata.get("bounds"),
+        "sensor": metadata.get("sensor"),
+        "resolution": metadata.get("resolution"),
+        "band_count": metadata.get("band_count"),
         "modalities": metadata.get("modalities") or [],
         "output": data.get("output"),
+        "geojson": geojson,
         "geojson_feature_count": _feature_count(geojson),
         "change_overlay_uri": change_overlay_uri,
         "generated_at": datetime.now(timezone.utc).isoformat(),

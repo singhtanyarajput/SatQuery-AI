@@ -99,8 +99,17 @@ async def analyze(
         logger.exception("analyze_failed")
         raise HTTPException(status_code=500, detail="Workflow failed") from exc
 
+    std_task = trace.task_type or getattr(trace, "task", "single_vqa")
+    models_executed = trace.models_executed or [step.model for step in trace.registry_execution if step.model]
+    input_meta = trace.input_metadata.model_dump()
+    conf = float(trace.confidence if trace.confidence is not None else trace.confidence_score)
+
     return AnalyzeResponseEnvelope(
         status="ok",
+        task_type=std_task,
+        models_executed=models_executed,
+        input_metadata=input_meta,
+        confidence=conf,
         geojson=controller.last_geojson,
         change_overlay_uri=controller.last_overlay_uri,
         trace=trace.model_dump(),

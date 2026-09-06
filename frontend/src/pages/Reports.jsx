@@ -20,21 +20,34 @@ import AnalysisDetailsPanel from "../components/reports/AnalysisDetailsPanel";
 import ReportPreviewModal from "../components/reports/ReportPreviewModal";
 import EmptyHistoryState from "../components/reports/EmptyHistoryState";
 import StatusBar from "../components/reports/StatusBar";
-import {
-  INITIAL_ANALYSES,
-  SUMMARY_STATS,
-} from "../mock/reportsData";
 
 const ITEMS_PER_PAGE = 8;
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+
+function normalizeAnalyses(payload) {
+  const records = Array.isArray(payload) ? payload : payload?.analyses || payload?.items || [];
+  return records.map((record) => ({
+    ...record,
+    id: record.id || record.analysis_id || record.report_id || `analysis-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    title: record.title || record.name || record.query || "Satellite Analysis",
+    location: record.location || record.area || "Unknown area",
+    type: record.type || record.analysis_type || "Scene Description",
+    category: record.category || "SINGLE IMAGE",
+    status: record.status || "Completed",
+    confidence: Number(record.confidence ?? record.confidence_score ?? 0),
+    isSaved: Boolean(record.isSaved ?? record.is_saved),
+    date: record.date || record.created_at || "--",
+    datetimeStr: record.datetimeStr || record.created_at || "--",
+    summary: record.summary || record.answer || "",
+    userQuery: record.userQuery || record.query || "",
+  }));
+}
 
 export default function Reports() {
   const navigate = useNavigate();
-  const [analyses, setAnalyses] = useState(INITIAL_ANALYSES);
+  const [analyses, setAnalyses] = useState([]);
   
-  // Default selected report should be Godavari Basin Water Body Extraction
-  const [selectedAnalysis, setSelectedAnalysis] = useState(() => {
-    return INITIAL_ANALYSES.find((a) => a.id === "AN-2025-0621") || INITIAL_ANALYSES[0] || null;
-  });
+  const [selectedAnalysis, setSelectedAnalysis] = useState(null);
 
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState("ALL REPORTS");
@@ -50,6 +63,72 @@ export default function Reports() {
   const [location, setLocation] = useState("All Locations");
   const [status, setStatus] = useState("All Statuses");
   const [sortBy, setSortBy] = useState("Newest First"); // 'Newest First' | 'Oldest First' | 'Highest Confidence'
+
+  useEffect(() => {
+    const handleAnalysisComplete = (event) => {
+      const [analysis] = normalizeAnalyses([event.detail]);
+      if (!analysis?.id) return;
+      setAnalyses((previous) => [
+        analysis,
+        ...previous.filter((item) => item.id !== analysis.id),
+      ]);
+      setSelectedAnalysis(analysis);
+    };
+
+    window.addEventListener("satquery:analysis-complete", handleAnalysisComplete);
+    let cancelled = false;
+
+    fetch(`${API_BASE}/api/v1/analyses`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Unable to load analyses (${response.status})`);
+        return response.json();
+      })
+      .then((payload) => {
+        if (!cancelled) {
+          const apiAnalyses = normalizeAnalyses(payload);
+          try {
+            const localRaw = localStorage.getItem("satquery_history");
+            if (localRaw) {
+              const localSessions = JSON.parse(localRaw);
+              const localFormatted = localSessions.map((s) => normalizeAnalyses([s.analysisData || s])[0]).filter(Boolean);
+              const combined = [...localFormatted, ...apiAnalyses.filter((a) => !localFormatted.some((l) => l.id === a.id))];
+              setAnalyses(combined);
+              return;
+            }
+          } catch (e) {
+            console.warn("Error reading local history in Reports:", e);
+          }
+          setAnalyses(apiAnalyses);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          try {
+            const localRaw = localStorage.getItem("satquery_history");
+            if (localRaw) {
+              const localSessions = JSON.parse(localRaw);
+              const localFormatted = localSessions.map((s) => normalizeAnalyses([s.analysisData || s])[0]).filter(Boolean);
+              setAnalyses(localFormatted);
+              return;
+            }
+          } catch (e) {
+            console.warn("Error reading local history in Reports fallback:", e);
+          }
+          setAnalyses([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("satquery:analysis-complete", handleAnalysisComplete);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedAnalysis && analyses.length > 0) {
+      setSelectedAnalysis(analyses[0]);
+    }
+  }, [analyses, selectedAnalysis]);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
@@ -325,7 +404,7 @@ export default function Reports() {
         <SummaryCard
           type="last"
           title="Latest Analysis"
-          value={analyses[0]?.date || "30 May 2025"}
+          value={analyses[0]?.date || "--"}
         />
       </div>
 
@@ -565,7 +644,7 @@ export default function Reports() {
               <strong className="text-slate-900 dark:text-white">
                 "{deleteModalReport.title}"
               </strong>{" "}
-              ({deleteModalReport.id})? This will remove the mock intelligence report and its execution trace from your local session.
+              ({deleteModalReport.id})? This will remove the analysis and its execution trace from this session.
             </p>
             <div className="mt-5 flex items-center justify-end space-x-2.5">
               <button

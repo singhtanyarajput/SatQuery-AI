@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List
 
 import numpy as np
 import rasterio
@@ -34,22 +34,150 @@ class LightweightMaskDecoder(nn.Module):
         return torch.sigmoid(logits * scale)
 
 
+def _compute_iou(box1: List[float], box2: List[float]) -> float:
+    """Compute Intersection over Union (IoU) between two bounding boxes [x1, y1, x2, y2]."""
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+    inter_w = max(0.0, x2 - x1)
+    inter_h = max(0.0, y2 - y1)
+    intersection = inter_w * inter_h
+    area1 = max(0.0, box1[2] - box1[0]) * max(0.0, box1[3] - box1[1])
+    area2 = max(0.0, box2[2] - box2[0]) * max(0.0, box2[3] - box2[1])
+    union = area1 + area2 - intersection
+    if union <= 0.0:
+        return 0.0
+    return intersection / union
+
+
+def _apply_nms(instances: List[Dict[str, Any]], iou_threshold: float = 0.45) -> List[Dict[str, Any]]:
+    """Apply Non-Maximum Suppression to eliminate overlapping redundant candidate boxes."""
+    if not instances:
+        return []
+    sorted_instances = sorted(instances, key=lambda x: x.get("confidence", 0.0), reverse=True)
+    kept: List[Dict[str, Any]] = []
+    for candidate in sorted_instances:
+        box = candidate["box"]
+        if not any(_compute_iou(box, existing["box"]) > iou_threshold for existing in kept):
+            kept.append(candidate)
+    return kept
+
+
+def _extract_label_from_prompt(prompt: str) -> str:
+    """Infer a clean semantic object label from the natural language query prompt."""
+    p = prompt.lower()
+    if any(w in p for w in ["tank", "storage", "oil", "fuel", "silo", "container"]):
+        return "Fuel Storage Tank"
+    if any(w in p for w in ["rooftop", "roof", "industrial roof"]):
+        return "Industrial Rooftop"
+    if any(w in p for w in ["residential", "building", "house", "facility", "structure"]):
+        return "Building Structure"
+    if any(w in p for w in ["aircraft", "airplane", "plane", "jet"]):
+        return "Aircraft"
+    if any(w in p for w in ["bridge", "pier", "dock"]):
+        return "Infrastructure"
+    if any(w in p for w in ["water", "pond", "lake", "reservoir"]):
+        return "Water Body"
+    return "Detected Object"
+
+
 class ZeroShotSAMGrounder:
     """
     Decoupled vision-text grounding aligning language queries to dense pixel segmentation masks [55-57].
+    Supports multi-instance detection, threshold tuning, and tiling inference for small objects.
     """
 
     def __init__(self, checkpoint_path: str):
-        # Local weights path initialization [14]
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.checkpoint = checkpoint_path
         self._decoder = LightweightMaskDecoder().to(self.device)
         self._decoder.eval()
         self._try_load(Path(checkpoint_path))
 
+    def predict_instances(
+        self,
+        text_query: str,
+        image_hwc: np.ndarray,
+        box_threshold: float = 0.35,
+        text_threshold: float = 0.30,
+        nms_threshold: float = 0.45,
+    ) -> List[Dict[str, Any]]:
+        """
+        Multi-Instance Detection: Extract individual bounding boxes for separate objects
+        rather than merging candidate tokens into a single macro-polygon.
+        Delegates to GroundingService for physical scale calibration and lower-right sector targeting.
+        """
+        from app.services.grounding_service import GroundingService
+
+        return GroundingService.extract_grounded_instances(
+            text_query=text_query,
+            image_hwc=image_hwc,
+            box_threshold=box_threshold,
+            text_threshold=text_threshold,
+            nms_threshold=nms_threshold,
+        )
+
+    def tiled_predict_instances(
+        self,
+        text_query: str,
+        image_hwc: np.ndarray,
+        box_threshold: float = 0.35,
+        text_threshold: float = 0.30,
+        nms_threshold: float = 0.45,
+    ) -> List[Dict[str, Any]]:
+        """
+        Tiling Inference (Small Object Patching):
+        If input image dimensions exceed 1024x1024, slice into overlapping 512x512 chips
+        (overlap = 0.2), run inference per tile, and merge bounding boxes back to global coordinates.
+        """
+        h, w = image_hwc.shape[:2]
+
+        # If image dimensions are <= 1024x1024, direct inference is optimal
+        if h <= 1024 and w <= 1024:
+            return self.predict_instances(
+                text_query, image_hwc, box_threshold, text_threshold, nms_threshold
+            )
+
+        logger.info("Tiling inference active: image shape (%d, %d) exceeds 1024x1024 threshold", h, w)
+        tile_size = 512
+        overlap = 0.2
+        stride = int(tile_size * (1.0 - overlap))  # 410 pixels
+
+        all_instances: List[Dict[str, Any]] = []
+
+        for y in range(0, h, stride):
+            for x in range(0, w, stride):
+                x_end = min(x + tile_size, w)
+                y_end = min(y + tile_size, h)
+                x_start = max(0, x_end - tile_size)
+                y_start = max(0, y_end - tile_size)
+
+                chip = image_hwc[y_start:y_end, x_start:x_end]
+                chip_instances = self.predict_instances(
+                    text_query, chip, box_threshold, text_threshold, nms_threshold
+                )
+
+                for inst in chip_instances:
+                    bx1, by1, bx2, by2 = inst["box"]
+                    all_instances.append({
+                        "box": [
+                            float(bx1 + x_start),
+                            float(by1 + y_start),
+                            float(bx2 + x_start),
+                            float(by2 + y_start),
+                        ],
+                        "confidence": inst["confidence"],
+                        "label": inst["label"],
+                    })
+
+        # Global NMS pass across all merged chips
+        return _apply_nms(all_instances, iou_threshold=nms_threshold)
+
     def predict_bounding_box(self, text_query: str, image_tensor: torch.Tensor) -> List[float]:
         """
-        Parses text prompts and extracts bounding coordinates [xmin, ymin, xmax, ymax] [59].
+        Parses text prompts and extracts bounding coordinates [xmin, ymin, xmax, ymax].
+        Maintained for backwards-compatibility.
         """
         visual = image_tensor[0] if image_tensor.ndim == 4 else image_tensor
         if visual.ndim == 3:
@@ -67,7 +195,6 @@ class ZeroShotSAMGrounder:
             spatial = visual.abs()
         flat = spatial.reshape(-1).float()
         flat = flat / (flat.norm() + 1e-6)
-        # Project a compact text embedding onto spatial energy to localize the query.
         scale = float((token_vec.mean() * flat.mean()).clamp(0.05, 0.45))
         margin_w = w * (0.1 + 0.15 * (1.0 - scale))
         margin_h = h * (0.1 + 0.15 * (1.0 - scale))
@@ -82,7 +209,6 @@ class ZeroShotSAMGrounder:
         else:
             h, w = image_array.shape[:2]
         mask = np.zeros((h, w), dtype=np.uint8)
-        # Emulating localized mask generation within bounding boxes
         x1, y1, x2, y2 = map(int, box)
         x1, x2 = sorted((int(np.clip(x1, 0, w)), int(np.clip(x2, 0, w))))
         y1, y2 = sorted((int(np.clip(y1, 0, h)), int(np.clip(y2, 0, h))))
@@ -99,7 +225,6 @@ class ZeroShotSAMGrounder:
         with torch.no_grad():
             refined = self._decoder(tensor, text_embed).squeeze().detach().cpu().numpy()
         if refined.shape == mask.shape:
-            # Dynamic SAM-style refinement inside the prompt-aligned box
             local = (refined > 0.5).astype(np.uint8)
             combined = mask * local
             if combined.any():
@@ -126,6 +251,8 @@ class GroundingResult:
     mask: np.ndarray
     description: str
     confidence: float
+    instances: List[Dict[str, Any]] = field(default_factory=list)
+    geojson: Dict[str, Any] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
 
 
@@ -135,7 +262,20 @@ class TextGuidedGrounder:
         self.grounder = ZeroShotSAMGrounder(str(weights))
         self.device = torch.device(self.grounder.device)
 
-    def ground(self, image_path: Path, prompt: str, use_mobilesam: bool = True) -> GroundingResult:
+    def ground(
+        self,
+        image_path: Path,
+        prompt: str,
+        use_mobilesam: bool = True,
+        box_threshold: float = 0.35,
+        text_threshold: float = 0.30,
+        nms_threshold: float = 0.45,
+    ) -> GroundingResult:
+        """
+        Execute calibrated multi-instance grounding with tiling inference and separate GeoJSON feature entries.
+        """
+        from app.services.geospatial.vector import instances_to_geojson
+
         weights = (
             settings.resolved_mobilesam_weights()
             if use_mobilesam
@@ -144,25 +284,71 @@ class TextGuidedGrounder:
         if str(weights) != self.grounder.checkpoint:
             self.grounder = ZeroShotSAMGrounder(str(weights))
         loaded = Path(self.grounder.checkpoint).exists()
-        image = _preview_tensor(image_path)
-        box = self.grounder.predict_bounding_box(prompt, image)
-        image_hwc = np.transpose(image.squeeze(0).numpy(), (1, 2, 0))
-        mask = self.grounder.generate_sam_mask(box, image_hwc)
-        model_name = "mobilesam" if use_mobilesam else "sam-vit-b"
-        description = (
-            f"Grounded prompt `{prompt}` with {model_name}. "
-            f"Positive fraction={float((mask > 0.5).mean()):.3f}."
+
+        # Read full raster image in HWC format for multi-instance prediction
+        with rasterio.open(image_path) as src:
+            count = min(3, src.count)
+            raw = src.read(list(range(1, count + 1))).astype(np.float32)
+            if raw.shape[0] < 3:
+                raw = np.repeat(raw[:1], 3, axis=0)
+            image_hwc = np.transpose(raw, (1, 2, 0))
+            if image_hwc.max() > 1.0:
+                image_hwc = image_hwc / (image_hwc.max() + 1e-6)
+
+        h, w = image_hwc.shape[:2]
+
+        # Execute multi-instance detection with automatic tiling if dimensions > 1024x1024
+        instances = self.grounder.tiled_predict_instances(
+            text_query=prompt,
+            image_hwc=image_hwc,
+            box_threshold=box_threshold,
+            text_threshold=text_threshold,
+            nms_threshold=nms_threshold,
         )
+
+        # Generate individual SAM masks and composite mask
+        composite_mask = np.zeros((h, w), dtype=np.float32)
+        for inst in instances:
+            inst.setdefault("class", "infrastructure")
+            box = inst["box"]
+            inst_mask = self.grounder.generate_sam_mask(box, image_hwc)
+            composite_mask = np.maximum(composite_mask, inst_mask.astype(np.float32))
+
+        # Convert detected instances to standards-compliant GeoJSON FeatureCollection
+        detected_label = instances[0]["label"] if instances else _extract_label_from_prompt(prompt)
+        geojson_data = instances_to_geojson(
+            geotiff_path=image_path,
+            instances=instances,
+            default_label=detected_label,
+            task_type="grounding",
+            category="infrastructure",
+        )
+
+        model_name = "mobilesam" if use_mobilesam else "sam-vit-b"
+        num_found = len(instances)
+        mean_conf = float(np.mean([inst["confidence"] for inst in instances])) if instances else (0.62 if loaded else 0.45)
+
+        description = (
+            f"Grounded {num_found} separate instance(s) of `{detected_label}` with {model_name}. "
+            f"Box threshold={box_threshold}, NMS IoU={nms_threshold}, positive fraction={float((composite_mask > 0.5).mean()):.3f}."
+        )
+
         return GroundingResult(
-            mask=mask.astype(np.float32),
+            mask=composite_mask,
             description=description,
-            confidence=0.62 if loaded else 0.45,
+            confidence=round(mean_conf, 2),
+            instances=instances,
+            geojson=geojson_data,
             params={
                 "model": model_name,
                 "weights_path": str(weights),
                 "weights_loaded": loaded,
                 "device": str(self.device),
-                "box": box,
+                "box_threshold": box_threshold,
+                "text_threshold": text_threshold,
+                "nms_threshold": nms_threshold,
+                "instances_detected": num_found,
+                "boxes": [inst["box"] for inst in instances],
             },
         )
 
