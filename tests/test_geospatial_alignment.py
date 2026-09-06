@@ -64,9 +64,12 @@ def test_align_subpixel_images_recovers_shift() -> None:
     warped_target, homography = align_subpixel_images(ref_img, target_img)
     assert warped_target.shape[:2] == ref_img.shape
     assert homography.shape == (3, 3)
-    overlap = (ref_img > 0) & (warped_target > 0)
+    ref_norm = ref_img.astype(np.float32)
+    peak = float(ref_norm.max() - ref_norm.min())
+    if peak > 0:
+        ref_norm = (ref_norm - float(ref_norm.min())) / peak
+    warped_norm = warped_target.astype(np.float32) / 255.0
+    overlap = (ref_norm > 0.05) & (warped_norm > 0.05)
     if overlap.any():
-        error = float(
-            np.mean((ref_img[overlap] - warped_target[overlap].astype(np.float32) / 255.0) ** 2)
-        )
+        error = float(np.mean((ref_norm[overlap] - warped_norm[overlap]) ** 2))
         assert error < 0.5

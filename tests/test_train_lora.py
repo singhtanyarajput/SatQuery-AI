@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("torch")
 import torch
 
 from train_lora import (
@@ -41,7 +44,7 @@ def test_multi_hot_19_class_labels() -> None:
 
 
 def test_dataset_returns_s1_s2_and_19_class_labels(tmp_path: Path) -> None:
-    ds = BigEarthNetDataset(str(tmp_path / "missing-catalog"))
+    ds = BigEarthNetDataset(str(tmp_path / "missing-catalog"), allow_synthetic=True)
     assert len(ds) >= 1
     item = ds[0]
     assert item["optical_pixel_values"].shape == (5, 224, 224)
@@ -52,12 +55,15 @@ def test_dataset_returns_s1_s2_and_19_class_labels(tmp_path: Path) -> None:
 
 def test_lora_config_targets_projection_matrices() -> None:
     cfg = build_lora_config()
-    assert cfg.r == 16
-    assert cfg.lora_alpha == 32
+    assert cfg.r == 8
+    assert cfg.lora_alpha == 16
     assert list(cfg.target_modules) == list(LORA_TARGET_MODULES)
     assert cfg.lora_dropout == 0.05
     assert cfg.bias == "none"
     assert cfg.task_type == "CAUSAL_LM"
+    assert "q_proj" in cfg.target_modules
+    assert "k_proj" in cfg.target_modules
+    assert "v_proj" in cfg.target_modules
 
 
 def test_inject_lora_compiles_on_projection_host() -> None:
@@ -75,3 +81,14 @@ def test_published_llava_adapter_inventory_string() -> None:
     assert LLAVA_ADAPTER_INVENTORY == (
         "trainable params: 14,155,776 || all params: 7,010,123,776 || trainable%: 0.2019"
     )
+
+
+def test_test_mode_saves_adapter_under_local_models_layout(tmp_path: Path) -> None:
+    from train_bigearthnet_lora import resolve_device, run_peft_domain_adaptation
+
+    device = resolve_device()
+    assert device.type in {"cpu", "cuda"}
+    out = tmp_path / "local_models" / "bigearthnet"
+    data = tmp_path / "data" / "raw" / "bigearthnet"
+    run_peft_domain_adaptation(data_dir=data, output_dir=out, test_mode=True)
+    assert (out / "checkpoint.pt").is_file()

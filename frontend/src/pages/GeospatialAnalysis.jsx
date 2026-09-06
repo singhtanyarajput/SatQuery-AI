@@ -50,6 +50,8 @@ export default function GeospatialAnalysis() {
 
   // Assistant Query Input
   const [assistantInput, setAssistantInput] = useState("");
+  const [pipelineOverlay, setPipelineOverlay] = useState(null);
+  const [pipelineBbox, setPipelineBbox] = useState(null);
 
   const presetLocations = [
     { id: "assam", name: "Brahmaputra Basin, Assam", coords: "26.2006° N, 92.9376° E", lon: 92.9376, lat: 26.2006 },
@@ -333,8 +335,8 @@ export default function GeospatialAnalysis() {
         {/* Center Column: OpenLayers GIS client */}
         <div className="relative flex-1 min-w-0">
           <MapViewer
-            geojsonOverlay={selectedOverlay}
-            bboxCoordinates={selectedBbox || [68.0, 6.5, 97.5, 35.5]}
+            geojsonOverlay={pipelineOverlay || selectedOverlay}
+            bboxCoordinates={pipelineBbox || selectedBbox || [68.0, 6.5, 97.5, 35.5]}
             baseImagery={baseImagery}
             onBaseImageryChange={setBaseImagery}
           />
@@ -352,6 +354,10 @@ export default function GeospatialAnalysis() {
           <ChatPanel
             externalInput={assistantInput}
             onInputChange={setAssistantInput}
+            onPipelineResult={(payload) => {
+              if (payload?.geojson) setPipelineOverlay(payload.geojson);
+              if (payload?.bbox) setPipelineBbox(payload.bbox);
+            }}
           />
         </div>
       </div>

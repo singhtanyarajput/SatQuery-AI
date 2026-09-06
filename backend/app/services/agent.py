@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any, Dict, List, TypedDict
 
 import rasterio
-from shapely.geometry import box, mapping
+from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 from sqlalchemy.orm import Session
 
-from app.database.models import AuditableExecutionTrace, TraceModelExecution
+from app.core.config import settings
 from app.schemas.trace import (
     AuditableTraceLogSchema,
     InputMetadataSchema,
@@ -79,6 +79,8 @@ class SatQueryController:
         }
         self.last_geojson: dict[str, Any] | None = None
         self.last_overlay_uri: str | None = None
+        self.last_bbox: list[float] | None = None
+        self.last_state: dict[str, Any] | None = None
         try:
             self._graph = compile_satquery_graph(self)
         except Exception as exc:  # noqa: BLE001
@@ -184,6 +186,8 @@ class SatQueryController:
     def _run_pipeline(self, state: FileWorkflowState) -> AuditableTraceLogSchema:
         self.last_geojson = None
         self.last_overlay_uri = None
+        self.last_bbox = None
+        self.last_state = None
         query = state["query"]
         filepaths = list(state.get("filepaths") or [])
         if not filepaths:
@@ -272,6 +276,7 @@ class SatQueryController:
             file_states[path] = "executed"
 
         primary_meta = parsed_meta[0]
+        self.last_bbox = [float(v) for v in primary_meta["bounds"]]
         trace_log = AuditableTraceLogSchema(
             trace_id=trace_id,
             task=task,
@@ -296,6 +301,8 @@ class SatQueryController:
         state["file_states"] = file_states
         state["parsed_meta"] = parsed_meta
         state["task"] = task
+        state["trace"] = trace_log.model_dump()
+        self.last_state = dict(state)
         logger.info("Workflow finished successfully for trace %s [100, 101].", trace_id)
         return trace_log
 
@@ -307,6 +314,8 @@ class SatQueryController:
         use_mobilesam: bool,
     ) -> tuple[str | None, float | None, List[RegistryExecutionSchema]]:
         extra: List[RegistryExecutionSchema] = []
+        models_dir = Path(settings.LOCAL_MODELS_DIR)
+        logger.info("dispatch_specialists models_dir=%s task=%s", models_dir, task)
         try:
             from app.services.geospatial.vector import raster_mask_to_geojson
             from app.services.models.base import LocalVisionLanguageClient
@@ -323,6 +332,8 @@ class SatQueryController:
             if task == "bi_temporal_change_analysis" and t2 is not None:
                 changed = TemporalChangeVQA().analyze(t1_path=optical, t2_path=t2, query=query)
                 self.last_overlay_uri = changed.overlay_uri
+                binary = (changed.change_mask > 0.5).astype("uint8")
+                self.last_geojson = raster_mask_to_geojson(optical, binary)
                 extra.append(RegistryExecutionSchema(model="change-vqa", params=changed.params))
                 return changed.answer, changed.confidence, extra
             if task == "single_image_grounding":
@@ -364,6 +375,7 @@ class SatQueryController:
         if self.db is None:
             return
         from geoalchemy2.shape import from_shape
+        from app.database.models import AuditableExecutionTrace, TraceModelExecution
 
         record = AuditableExecutionTrace(
             trace_id=trace.trace_id,

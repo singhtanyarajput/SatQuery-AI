@@ -81,6 +81,7 @@ async def health(db: Session = Depends(get_db)) -> dict[str, Any]:
             "sam": settings.resolved_sam_weights().exists(),
             "mobilesam": settings.resolved_mobilesam_weights().exists(),
             "bigearthnet": settings.resolved_bigearthnet().exists(),
+            "cdvqa": settings.resolved_cdvqa().exists(),
         },
         "disk": {
             "total_bytes": disk.total,
