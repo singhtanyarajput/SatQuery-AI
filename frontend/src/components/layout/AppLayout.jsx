@@ -27,8 +27,6 @@ export default function AppLayout() {
  <main className={`flex-1 flex flex-col min-h-0 ${isWorkspace ? "p-0" : "p-4 sm:p-6 lg:p-8"}`}>
           <Outlet />
         </main>
-          <Outlet />
-        </main>
       </div>
     </div>
   );
