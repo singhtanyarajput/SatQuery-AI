@@ -99,9 +99,23 @@ def _collect_uploads(
     files: list[UploadFile],
     extras: list[UploadFile | None],
 ) -> list[UploadFile]:
-    collected: list[UploadFile] = []
+    valid_files: list[UploadFile] = []
     seen: set[int] = set()
-    for item in list(files or []) + list(extras):
+    for item in list(files or []):
+        if item is None:
+            continue
+        marker = id(item)
+        if marker in seen:
+            continue
+        if not getattr(item, "filename", None) and not getattr(item, "size", None):
+            continue
+        seen.add(marker)
+        valid_files.append(item)
+    if valid_files:
+        return valid_files
+
+    collected: list[UploadFile] = []
+    for item in extras:
         if item is None:
             continue
         marker = id(item)
@@ -118,6 +132,8 @@ def _geometry_payload(
     controller: SatQueryController,
     trace: AuditableTraceLogSchema,
 ) -> tuple[dict[str, Any] | None, list[float] | None, dict[str, Any] | None]:
+    from app.services.geospatial.vector import standardize_feature_collection
+
     bounds = list(trace.input_metadata.bounds)
     bbox = [float(v) for v in bounds] if len(bounds) >= 4 else getattr(controller, "last_bbox", None)
     geojson = controller.last_geojson
@@ -129,7 +145,12 @@ def _geometry_payload(
             "features": [
                 {
                     "type": "Feature",
-                    "properties": {"kind": "scene_bounds"},
+                    "properties": {
+                        "id": 1,
+                        "label": "Scene AOI",
+                        "confidence": float(trace.confidence_score or 0.85),
+                        "class": "infrastructure",
+                    },
                     "geometry": {
                         "type": "Polygon",
                         "coordinates": [[
@@ -143,6 +164,9 @@ def _geometry_payload(
                 }
             ],
         }
+
+    if geojson:
+        geojson = standardize_feature_collection(geojson, task_type=trace.task)
 
     change_mask = None
     overlay_uri = controller.last_overlay_uri
@@ -173,19 +197,29 @@ def _coordinates_from_geojson(geojson: dict[str, Any] | None) -> list[Any]:
 async def query_pipeline(
     query: str = Form(..., min_length=3),
     files: list[UploadFile] = File(default=[]),
+    images: list[UploadFile] = File(default=[]),
     file: UploadFile | None = File(default=None),
     image: UploadFile | None = File(default=None),
     optical: UploadFile | None = File(default=None),
     optical_t2: UploadFile | None = File(default=None),
     sar: UploadFile | None = File(default=None),
+    image_before: UploadFile | None = File(default=None),
+    image_after: UploadFile | None = File(default=None),
+    image_t1: UploadFile | None = File(default=None),
+    image_t2: UploadFile | None = File(default=None),
     force_task: str | None = Form(default=None),
     use_mobilesam: bool = Form(default=True),
     db: Session | None = Depends(get_optional_db),
 ) -> QueryResponseEnvelope:
     """Accept multipart imagery, run the Phase 5 LangGraph orchestrator, return map-ready JSON."""
-    uploads = _collect_uploads(files, [file, image, optical, optical_t2, sar])
+    uploads = _collect_uploads(
+        files + images,
+        [file, image, optical, optical_t2, sar, image_before, image_after, image_t1, image_t2],
+    )
     if not uploads:
         raise HTTPException(status_code=400, detail="At least one image file is required")
+
+    logger.info("Received %d uploaded image(s) for query: '%s'", len(uploads), query[:100])
 
     forced: TaskType | None = None
     if force_task:
@@ -200,10 +234,13 @@ async def query_pipeline(
         saved = await _persist_raster(upload, trace_dir)
         filepaths.append(str(saved))
 
+    logger.info("Persisted %d raster image(s) for execution: %s", len(filepaths), filepaths)
+
     logger.info(
         "query_received",
         extra={
             "query": query[:200],
+            "image_count": len(uploads),
             "files": filepaths,
             "models_dir": str(settings.LOCAL_MODELS_DIR),
         },
@@ -251,9 +288,18 @@ async def query_pipeline(
     )
     (report_dir / json_name).write_bytes(json_body)
 
+    std_task = trace.task_type or getattr(trace, "task", "single_vqa")
+    models_executed = trace.models_executed or [step.model for step in trace.registry_execution if step.model]
+    input_meta = trace.input_metadata.model_dump()
+    conf = float(trace.confidence if trace.confidence is not None else trace.confidence_score)
+
     return QueryResponseEnvelope(
         status="ok",
         answer=trace.output,
+        task_type=std_task,
+        models_executed=models_executed,
+        input_metadata=input_meta,
+        confidence=conf,
         geojson=geojson,
         bbox=bbox,
         change_mask=change_mask,

@@ -98,7 +98,8 @@ export default function QueryComposer({
         name: f.name,
         size: `${(f.size / (1024 * 1024)).toFixed(1)} MB`,
         modality: f.name.endsWith(".tif") || f.name.endsWith(".tiff") ? "GeoTIFF Satellite" : "Optical Imagery",
-        baseImage: "/satellite/water-optical.jpg",
+        baseImage: f.type.startsWith("image/") ? URL.createObjectURL(f) : "/satellite/water-optical.jpg",
+        file: f,
       }));
       onAddFiles(formatted);
     }
@@ -114,7 +115,12 @@ export default function QueryComposer({
         name: f.name,
         size: `${(f.size / (1024 * 1024)).toFixed(1)} MB`,
         modality: i === 0 ? "Temporal T1 / Optical" : "Temporal T2 / SAR",
-        baseImage: i === 0 ? "/satellite/landcover-before.jpg" : "/satellite/landcover-change.jpg",
+        baseImage: f.type.startsWith("image/")
+          ? URL.createObjectURL(f)
+          : i === 0
+          ? "/satellite/landcover-before.jpg"
+          : "/satellite/landcover-change.jpg",
+        file: f,
       }));
       onAddFiles(formatted);
     }

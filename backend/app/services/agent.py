@@ -17,6 +17,14 @@ from shapely.geometry.base import BaseGeometry
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.agents.router import (
+    InputInspectorNode,
+    STANDARDIZED_TASK_MAP,
+    TASK_BITEMPORAL_CHANGE,
+    TASK_CROSS_MODAL,
+    TASK_SINGLE_GROUNDING,
+    TASK_SINGLE_VQA,
+)
 from app.schemas.trace import (
     AuditableTraceLogSchema,
     InputMetadataSchema,
@@ -41,6 +49,7 @@ REGISTRY_MODELS = {
     "SAR-Structure-Extractor",
     "CD-VQA-Pro",
     "Opt-SAR-Fusion-Net",
+    "cross_modal_analysis_tool",
     "llava-3b",
     "sam-vit-b",
     "mobilesam",
@@ -76,6 +85,11 @@ class SatQueryController:
             "SAR-Structure-Extractor": {"type": "sar_processing", "bands": ["VV", "VH"]},
             "CD-VQA-Pro": {"type": "change_detection", "bands": ["Multispectral"]},
             "Opt-SAR-Fusion-Net": {"type": "fusion", "bands": ["Optical", "SAR"]},
+            "cross_modal_analysis_tool": {
+                "type": "fusion",
+                "bands": ["Optical", "SAR-C-Band"],
+                "description": "Optical built-up & SAR sigma-0 < -18 dB water delineation",
+            },
         }
         self.last_geojson: dict[str, Any] | None = None
         self.last_overlay_uri: str | None = None
@@ -105,11 +119,17 @@ class SatQueryController:
 
             if src.count >= 4:
                 detected = ["Red", "Green", "Blue", "NIR"]
+                sensor = "Cartosat-2S (Multispectral)"
             elif src.count in [1, 2]:
                 # SAR C-band polarizations (1–2 bands). Spec transcription used [1, 35].
                 detected = ["SAR-C-Band"]
+                sensor = "Sentinel-1 / RISAT (SAR C-Band)"
             else:
                 detected = ["RGB"]
+                sensor = "Cartosat-2S (Optical RGB)"
+
+            res_val = abs(affine[0])
+            resolution = f"{res_val:.6f} deg/px" if "4326" in crs else f"{res_val:.2f} m/px"
 
             return {
                 "crs": crs,
@@ -118,6 +138,9 @@ class SatQueryController:
                 "modalities": list(modalities) if modalities else detected,
                 "width": src.width,
                 "height": src.height,
+                "sensor": sensor,
+                "resolution": resolution,
+                "band_count": src.count,
             }
 
     def validate_spatial_alignment(self, meta_t1: Any, meta_t2: Any) -> bool:
@@ -147,19 +170,24 @@ class SatQueryController:
 
         return True
 
-    def classify_query(self, query: str, **_kwargs: Any) -> str:
+    def classify_query(
+        self,
+        query: str,
+        filepaths: List[str] | None = None,
+        parsed_meta: List[Dict[str, Any]] | None = None,
+        **_kwargs: Any,
+    ) -> str:
         """
-        Classifies incoming queries into target task categories [72, 74, 77, 87, 88].
+        Classifies incoming queries and input imagery into target task categories.
+        Enforces strict priority routing and rejection via InputInspectorNode.
         """
-        q = query.lower()
-        if "change" in q or "before" in q or "after" in q:
-            return "bi_temporal_change_analysis"
-        elif "ground" in q or "highlight" in q or "where is" in q:
-            return "single_image_grounding"
-        elif "both" in q or "combine" in q or "sar" in q:
-            return "cross_modal_joint_analysis"
-        else:
-            return "single_image_vqa"
+        force_task = _kwargs.get("force_task")
+        return InputInspectorNode.inspect(
+            query=query,
+            filepaths=filepaths,
+            parsed_meta=parsed_meta,
+            force_task=force_task,
+        )
 
     def execute_workflow(
         self,
@@ -221,7 +249,11 @@ class SatQueryController:
         else:
             file_states[filepaths[0]] = "validated"
 
-        task = state.get("force_task") or self.classify_query(query)
+        task = state.get("force_task") or self.classify_query(
+            query,
+            filepaths=filepaths,
+            parsed_meta=parsed_meta,
+        )
 
         # Build execution trace mappings based on classified tasks [94, 95]
         execution_pipeline: List[RegistryExecutionSchema] = []
@@ -277,19 +309,28 @@ class SatQueryController:
 
         primary_meta = parsed_meta[0]
         self.last_bbox = [float(v) for v in primary_meta["bounds"]]
+        models_executed = [step.model for step in execution_pipeline if step.model]
+        std_task = STANDARDIZED_TASK_MAP.get(task, task)
         trace_log = AuditableTraceLogSchema(
             trace_id=trace_id,
             task=task,
+            task_type=std_task,
             query=query,
             input_metadata=InputMetadataSchema(
                 crs=primary_meta["crs"],
                 bounds=primary_meta["bounds"],
                 affine_transform=primary_meta["affine_transform"],
                 modalities=primary_meta["modalities"],
+                sensor=primary_meta.get("sensor", "Cartosat-2S / Sentinel-1"),
+                resolution=primary_meta.get("resolution", "1.0m"),
+                band_count=primary_meta.get("band_count", 3),
             ),
             registry_execution=execution_pipeline,
+            models_executed=models_executed,
             confidence_score=confidence,
+            confidence=confidence,
             output=output_desc,
+            geojson=self.last_geojson,
         )
 
         # Log trace output to local databases [21, 74, 80]
@@ -317,9 +358,14 @@ class SatQueryController:
         models_dir = Path(settings.LOCAL_MODELS_DIR)
         logger.info("dispatch_specialists models_dir=%s task=%s", models_dir, task)
         try:
-            from app.services.geospatial.vector import raster_mask_to_geojson
+            from app.services.geospatial.vector import (
+                raster_mask_to_geojson,
+                scene_focus_geojson,
+                standardize_feature_collection,
+            )
             from app.services.models.base import LocalVisionLanguageClient
             from app.services.models.change_vqa import TemporalChangeVQA
+            from app.services.models.cross_modal import CrossModalAnalysisTool
             from app.services.models.fusion import OpticalSarFusion
             from app.services.models.grounding import TextGuidedGrounder
         except Exception as exc:  # noqa: BLE001
@@ -333,14 +379,47 @@ class SatQueryController:
                 changed = TemporalChangeVQA().analyze(t1_path=optical, t2_path=t2, query=query)
                 self.last_overlay_uri = changed.overlay_uri
                 binary = (changed.change_mask > 0.5).astype("uint8")
-                self.last_geojson = raster_mask_to_geojson(optical, binary)
+                self.last_geojson = raster_mask_to_geojson(
+                    optical,
+                    binary,
+                    task_type="change_detection",
+                    label="Detected Inundation / Change",
+                    category="flood",
+                    confidence=changed.confidence,
+                )
+                if self.last_geojson and "features" in self.last_geojson:
+                    for idx, feat in enumerate(self.last_geojson["features"]):
+                        feat.setdefault("properties", {})
+                        feat["properties"].update({
+                            "id": idx + 1,
+                            "label": feat["properties"].get("label") or "Detected Inundation / Change",
+                            "confidence": round(changed.confidence, 2),
+                            "class": "flood",
+                            "source": "bi_temporal_change",
+                        })
+                    self.last_geojson = standardize_feature_collection(
+                        self.last_geojson, task_type="change_detection"
+                    )
+                extra.append(RegistryExecutionSchema(model="CD-VQA-Pro", params={"epoch_difference": True}))
                 extra.append(RegistryExecutionSchema(model="change-vqa", params=changed.params))
                 return changed.answer, changed.confidence, extra
             if task == "single_image_grounding":
                 grounded = TextGuidedGrounder().ground(
                     image_path=optical, prompt=query, use_mobilesam=use_mobilesam
                 )
-                self.last_geojson = raster_mask_to_geojson(optical, grounded.mask)
+                self.last_geojson = (
+                    grounded.geojson
+                    if grounded.geojson
+                    else raster_mask_to_geojson(
+                        optical,
+                        grounded.mask,
+                        task_type="grounding",
+                        label="Detected Object",
+                        category="infrastructure",
+                        confidence=grounded.confidence,
+                    )
+                )
+                self.last_geojson = standardize_feature_collection(self.last_geojson, task_type="grounding")
                 extra.append(
                     RegistryExecutionSchema(
                         model="mobilesam" if use_mobilesam else "sam-vit-b",
@@ -349,19 +428,45 @@ class SatQueryController:
                 )
                 return grounded.description, grounded.confidence, extra
             if task == "cross_modal_joint_analysis" and t2 is not None:
-                fused = OpticalSarFusion().fuse(optical_path=optical, sar_path=t2)
-                vlm = LocalVisionLanguageClient().generate(
-                    prompt=query,
-                    image_path=optical,
-                    extra_context={"fusion_energy": fused.attention_energy},
+                cm_result = CrossModalAnalysisTool().analyze(optical_path=optical, sar_path=t2, query=query)
+                self.last_geojson = standardize_feature_collection(
+                    cm_result.geojson, task_type="cross_modal"
                 )
-                self.last_geojson = raster_mask_to_geojson(optical, fused.salient_mask)
-                extra.append(RegistryExecutionSchema(model="optical-sar-fusion", params=fused.params))
-                extra.append(RegistryExecutionSchema(model="SAR-Structure-Extractor", params={"bands": ["VV", "VH"]}))
-                return vlm.text, min(vlm.confidence, fused.confidence), extra
+                extra.append(
+                    RegistryExecutionSchema(
+                        model="cross_modal_analysis_tool",
+                        params=cm_result.params,
+                    )
+                )
+                extra.append(
+                    RegistryExecutionSchema(
+                        model="Opt-SAR-Fusion-Net",
+                        params={"cross_attention": True, "sar_water_threshold_db": -18.0},
+                    )
+                )
+                return cm_result.answer, cm_result.confidence, extra
             if task == "single_image_vqa":
                 vlm = LocalVisionLanguageClient().generate(prompt=query, image_path=optical)
                 extra.append(RegistryExecutionSchema(model="llava-3b", params=vlm.params))
+                try:
+                    grounded = TextGuidedGrounder().ground(
+                        image_path=optical, prompt=query, use_mobilesam=use_mobilesam
+                    )
+                    if grounded.geojson and grounded.geojson.get("features"):
+                        self.last_geojson = standardize_feature_collection(grounded.geojson, task_type="grounding")
+                    else:
+                        self.last_geojson = scene_focus_geojson(
+                            optical,
+                            label=query[:40] if query else "Scene focus",
+                            confidence=vlm.confidence,
+                        )
+                except Exception as g_err:
+                    logger.debug("vqa_grounding_salience_failed: %s", g_err)
+                    self.last_geojson = scene_focus_geojson(
+                        optical,
+                        label=query[:40] if query else "Scene focus",
+                        confidence=vlm.confidence,
+                    )
                 return vlm.text, vlm.confidence, extra
         except Exception as exc:  # noqa: BLE001
             logger.warning("specialist_dispatch_failed: %s", exc)
@@ -423,7 +528,7 @@ def _coerce_filepaths(filepaths: List[str] | None, kwargs: Dict[str, Any]) -> Li
 
 
 def compile_satquery_graph(controller: SatQueryController):
-    """LangGraph state machine: ingest → validate → classify → execute."""
+    """LangGraph state machine: ingest → inspect → validate → classify → execute."""
     if StateGraph is None:
         return None
 
@@ -434,6 +539,17 @@ def compile_satquery_graph(controller: SatQueryController):
             parsed.append(controller.parse_geotiff_metadata(path))
             file_states[path] = "ingested"
         return {**state, "parsed_meta": parsed, "file_states": file_states}
+
+    def inspect_node(state: FileWorkflowState) -> FileWorkflowState:
+        paths = state.get("filepaths") or []
+        parsed = state.get("parsed_meta") or []
+        task = state.get("force_task") or InputInspectorNode.inspect(
+            query=state["query"],
+            filepaths=paths,
+            parsed_meta=parsed,
+            force_task=state.get("force_task"),
+        )
+        return {**state, "task": task, "task_type": STANDARDIZED_TASK_MAP.get(task, task)}
 
     def validate_node(state: FileWorkflowState) -> FileWorkflowState:
         parsed = list(state.get("parsed_meta") or [])
@@ -451,8 +567,14 @@ def compile_satquery_graph(controller: SatQueryController):
         return {**state, "aligned": aligned, "file_states": file_states}
 
     def classify_node(state: FileWorkflowState) -> FileWorkflowState:
-        task = state.get("force_task") or controller.classify_query(state["query"])
-        return {**state, "task": task}
+        paths = state.get("filepaths") or []
+        parsed = state.get("parsed_meta") or []
+        task = state.get("task") or state.get("force_task") or controller.classify_query(
+            state["query"],
+            filepaths=paths,
+            parsed_meta=parsed,
+        )
+        return {**state, "task": task, "task_type": STANDARDIZED_TASK_MAP.get(task, task)}
 
     def execute_node(state: FileWorkflowState) -> FileWorkflowState:
         if state.get("aligned") is False:
@@ -473,11 +595,13 @@ def compile_satquery_graph(controller: SatQueryController):
 
     graph = StateGraph(dict)
     graph.add_node("ingest", ingest_node)
+    graph.add_node("inspect", inspect_node)
     graph.add_node("validate", validate_node)
     graph.add_node("classify", classify_node)
     graph.add_node("execute", execute_node)
     graph.set_entry_point("ingest")
-    graph.add_edge("ingest", "validate")
+    graph.add_edge("ingest", "inspect")
+    graph.add_edge("inspect", "validate")
     graph.add_edge("validate", "classify")
     graph.add_edge("classify", "execute")
     graph.add_edge("execute", END)

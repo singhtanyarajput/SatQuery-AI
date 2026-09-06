@@ -57,6 +57,9 @@ export default function ChatPanel({
       setAnswer(payload.answer);
       setAudit(payload.audit_summary);
       onPipelineResult(payload);
+      window.dispatchEvent(
+        new CustomEvent("satquery:analysis-complete", { detail: payload })
+      );
     } catch (err) {
       setError(err.message || String(err));
     } finally {

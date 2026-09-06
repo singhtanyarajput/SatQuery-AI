@@ -4,11 +4,14 @@ import {
   Calendar,
   Sun,
   Moon,
+  Plus,
 } from "lucide-react";
 import { useTheme } from "../../context/ThemeContext";
+import { useAnalysisHistory } from "../../context/AnalysisHistoryContext";
 
 export default function TopNavbar({ onToggleSidebar, onOpenSidebar, isSidebarCollapsed }) {
   const { theme, toggleTheme } = useTheme();
+  const { startNewAnalysis } = useAnalysisHistory();
   const [currentTime, setCurrentTime] = useState(new Date());
   const navigate = useNavigate();
 
@@ -79,8 +82,22 @@ export default function TopNavbar({ onToggleSidebar, onOpenSidebar, isSidebarCol
         </div>
       </div>
 
-      {/* Right Side: Theme Toggle */}
+      {/* Right Side: Actions & Theme Toggle */}
       <div className="flex items-center space-x-2 sm:space-x-3">
+        {/* New Analysis Header Button */}
+        <button
+          type="button"
+          onClick={() => {
+            startNewAnalysis();
+            navigate("/workspace");
+          }}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200/90 bg-white hover:bg-slate-50 text-slate-700 dark:border-dark-border dark:bg-dark-card dark:hover:bg-dark-hover dark:text-slate-200 text-xs font-semibold shadow-2xs transition cursor-pointer"
+          title="Start a new analysis query"
+        >
+          <Plus className="w-3.5 h-3.5 text-brand-600 dark:text-cyan-400" />
+          <span className="hidden sm:inline">New Analysis</span>
+        </button>
+
         {/* Dark / Light Mode Toggle */}
         <button
           type="button"

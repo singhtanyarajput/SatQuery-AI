@@ -26,15 +26,93 @@ const SAR_XYZ = {
   attributions: "SAR VV/VH panel (grayscale backscatter view)",
 };
 
-const maskStyle = new Style({
-  stroke: new Stroke({
-    color: "#ff3333",
-    width: 3,
-  }),
-  fill: new Fill({
-    color: "rgba(255, 51, 51, 0.2)",
-  }),
-});
+function getFeatureStyle(feature, collectionTaskType) {
+  const props = feature.getProperties() || {};
+  const featureClass = (props.class || props.category || "").toLowerCase();
+  const label = (props.label || "").toLowerCase();
+  const taskType = (props.task_type || collectionTaskType || "").toLowerCase();
+
+  // Flood / Inundation Hazard: Red boundary (stroke: #ef4444, width: 2px), fill: rgba(239, 68, 68, 0.45)
+  if (
+    featureClass === "flood" ||
+    featureClass === "water" ||
+    label.includes("flood") ||
+    label.includes("inundat") ||
+    label.includes("change") ||
+    taskType === "change_detection" ||
+    taskType.includes("change")
+  ) {
+    return new Style({
+      stroke: new Stroke({
+        color: "#ef4444",
+        width: 2.0,
+      }),
+      fill: new Fill({
+        color: "rgba(239, 68, 68, 0.45)",
+      }),
+      text: props.label
+        ? new Text({
+            text: `${props.label}${props.confidence != null ? ` (${Math.round(props.confidence * 100)}%)` : ""}`,
+            font: "12px monospace, sans-serif",
+            fill: new Fill({ color: "#ffffff" }),
+            stroke: new Stroke({ color: "rgba(15,23,42,0.85)", width: 3 }),
+            offsetY: -12,
+          })
+        : undefined,
+    });
+  }
+
+  // Cross-Modal / SAR: High-visibility amber (stroke: #f59e0b, width: 2px), fill: rgba(245, 158, 11, 0.35)
+  if (
+    featureClass === "sar_anomaly" ||
+    featureClass === "radar" ||
+    label.includes("sar") ||
+    label.includes("radar") ||
+    label.includes("anomaly") ||
+    label.includes("backscatter") ||
+    taskType === "cross_modal" ||
+    taskType.includes("cross_modal")
+  ) {
+    return new Style({
+      stroke: new Stroke({
+        color: "#f59e0b",
+        width: 2.0,
+      }),
+      fill: new Fill({
+        color: "rgba(245, 158, 11, 0.35)",
+      }),
+      text: props.label
+        ? new Text({
+            text: `${props.label}${props.confidence != null ? ` (${Math.round(props.confidence * 100)}%)` : ""}`,
+            font: "12px monospace, sans-serif",
+            fill: new Fill({ color: "#fef3c7" }),
+            stroke: new Stroke({ color: "rgba(15,23,42,0.85)", width: 3 }),
+            offsetY: -12,
+          })
+        : undefined,
+    });
+  }
+
+  // Grounding / Infrastructure: Crisp cyan border (stroke: #06b6d4, width: 2.5px), fill: rgba(6, 182, 212, 0.25)
+  return new Style({
+    stroke: new Stroke({
+      color: "#06b6d4",
+      width: 2.5,
+    }),
+    fill: new Fill({
+      color: "rgba(6, 182, 212, 0.25)",
+    }),
+    text: props.label
+      ? new Text({
+          text: `${props.label}${props.confidence != null ? ` (${Math.round(props.confidence * 100)}%)` : ""}`,
+          font: "12px monospace, sans-serif",
+          fill: new Fill({ color: "#cffafe" }),
+          stroke: new Stroke({ color: "rgba(15,23,42,0.85)", width: 3 }),
+          offsetY: -12,
+        })
+      : undefined,
+  });
+}
 
 const bboxStyle = new Style({
   stroke: new Stroke({
@@ -55,12 +133,16 @@ const bboxStyle = new Style({
 });
 
 function isValidExtent(extent) {
+  if (!Array.isArray(extent) || extent.length !== 4) return false;
+  const [minX, minY, maxX, maxY] = extent;
   return (
-    Array.isArray(extent) &&
-    extent.length === 4 &&
-    extent.every((v) => Number.isFinite(v)) &&
-    extent[0] < extent[2] &&
-    extent[1] < extent[3]
+    Number.isFinite(minX) &&
+    Number.isFinite(minY) &&
+    Number.isFinite(maxX) &&
+    Number.isFinite(maxY) &&
+    minX <= maxX &&
+    minY <= maxY &&
+    !(minX === 0 && minY === 0 && maxX === 0 && maxY === 0)
   );
 }
 
@@ -93,10 +175,12 @@ function bboxToPolygon(bboxCoordinates) {
 }
 
 const MapViewer = ({
+  analysisData,
   geojsonOverlay,
   bboxCoordinates,
   baseImagery: baseImageryProp,
   onBaseImageryChange,
+  overlayOpacity = 0.70,
 }) => {
   const mapElement = useRef();
   const mapRef = useRef();
@@ -110,6 +194,16 @@ const MapViewer = ({
   const [baseImagery, setBaseImagery] = useState(baseImageryProp || "optical");
   const [cursorCoords, setCursorCoords] = useState({ lon: 0, lat: 0, zoom: 2 });
   const [pointerActive, setPointerActive] = useState(false);
+
+  const activeGeojson =
+    analysisData?.geojson ||
+    analysisData?.audit_summary?.geojson ||
+    geojsonOverlay;
+
+  const activeBbox =
+    bboxCoordinates ||
+    analysisData?.bbox ||
+    analysisData?.audit_summary?.bounds;
 
   useEffect(() => {
     if (baseImageryProp && baseImageryProp !== baseImagery) {
@@ -192,66 +286,115 @@ const MapViewer = ({
   useEffect(() => {
     if (!mapRef.current) return;
 
+    // Clean Slate: explicitly wipe vector sources and remove existing layers before rendering new ones
     if (overlayLayerRef.current) {
+      const src = overlayLayerRef.current.getSource();
+      if (src && typeof src.clear === "function") {
+        src.clear();
+      }
       mapRef.current.removeLayer(overlayLayerRef.current);
       overlayLayerRef.current = null;
     }
-
-    if (!geojsonOverlay) return;
-
-    // Convert and project returning spatial GeoJSON masks on the map [3, 58, 102, 103]
-    const vectorSource = new VectorSource({
-      features: new GeoJSON().readFeatures(geojsonOverlay, {
-        dataProjection: "EPSG:4326",
-        featureProjection: "EPSG:3857",
-      }),
-    });
-
-    const vectorLayer = new VectorLayer({
-      source: vectorSource,
-      style: maskStyle,
-      opacity: 0.95,
-      properties: { name: "geojson-mask-overlay" },
-    });
-
-    overlayLayerRef.current = vectorLayer;
-    // Add overlay to the OpenLayers canvas view map
-    mapRef.current.addLayer(vectorLayer);
-
-    // Auto-focus boundaries onto spatial change vectors
-    const extent = vectorSource.getExtent();
-    if (isValidExtent(extent)) {
-      mapRef.current.getView().fit(extent, { padding: [69, 69, 69, 69], duration: 1000 });
-    }
-  }, [geojsonOverlay]);
-
-  useEffect(() => {
-    if (!mapRef.current) return;
-
     if (bboxLayerRef.current) {
+      const src = bboxLayerRef.current.getSource();
+      if (src && typeof src.clear === "function") {
+        src.clear();
+      }
       mapRef.current.removeLayer(bboxLayerRef.current);
       bboxLayerRef.current = null;
     }
 
-    const geom = bboxToPolygon(bboxCoordinates);
-    if (!geom) return;
+    const geojson = activeGeojson;
+    const taskType = geojson?.properties?.task_type;
 
-    const bboxSource = new VectorSource({
-      features: [new Feature({ geometry: geom, name: "bbox" })],
-    });
-    const bboxLayer = new VectorLayer({
-      source: bboxSource,
-      style: bboxStyle,
-      properties: { name: "bbox-overlay" },
-    });
-    bboxLayerRef.current = bboxLayer;
-    mapRef.current.addLayer(bboxLayer);
+    let parsedFeatures = [];
+    if (geojson && (geojson.type === "FeatureCollection" || geojson.type === "Feature")) {
+      const featureList = Array.isArray(geojson.features)
+        ? geojson.features
+        : geojson.type === "Feature"
+        ? [geojson]
+        : [];
 
-    const extent = geom.getExtent();
-    if (isValidExtent(extent) && !geojsonOverlay) {
-      mapRef.current.getView().fit(extent, { padding: [69, 69, 69, 69], duration: 1000 });
+      if (featureList.length > 0) {
+        try {
+          parsedFeatures = new GeoJSON().readFeatures(geojson, {
+            dataProjection: "EPSG:4326",
+            featureProjection: "EPSG:3857",
+          });
+        } catch (err) {
+          console.error("Error reading GeoJSON features:", err);
+          parsedFeatures = [];
+        }
+      }
     }
-  }, [bboxCoordinates, geojsonOverlay]);
+
+    const hasGeojsonFeatures = Array.isArray(parsedFeatures) && parsedFeatures.length > 0;
+
+    if (hasGeojsonFeatures) {
+      // Dynamic multi-instance vector layer with calibrated default opacity
+      const vectorSource = new VectorSource();
+      vectorSource.clear();
+      vectorSource.addFeatures(parsedFeatures);
+
+      const vectorLayer = new VectorLayer({
+        source: vectorSource,
+        style: (feature) => getFeatureStyle(feature, taskType),
+        opacity: overlayOpacity ?? 0.70,
+        properties: { name: "geojson-dynamic-overlay" },
+      });
+
+      overlayLayerRef.current = vectorLayer;
+      mapRef.current.addLayer(vectorLayer);
+
+      // Auto-Centering & Bounding Box Fit: precisely around returned features
+      try {
+        const extent = vectorSource.getExtent();
+        if (isValidExtent(extent)) {
+          let fitExtent = extent;
+          if (extent[0] === extent[2] || extent[1] === extent[3]) {
+            fitExtent = [extent[0] - 100, extent[1] - 100, extent[2] + 100, extent[3] + 100];
+          }
+          mapRef.current.getView().fit(fitExtent, { padding: [40, 40, 40, 40], duration: 800 });
+        }
+      } catch (fitErr) {
+        console.warn("Could not fit view to vector extent:", fitErr);
+      }
+    } else if (activeBbox && Array.isArray(activeBbox) && activeBbox.length >= 4) {
+      // Clean Slate: Only fallback to static bounding box if no real GeoJSON features exist
+      try {
+        const geom = bboxToPolygon(activeBbox);
+        if (geom) {
+          const bboxSource = new VectorSource({
+            features: [new Feature({ geometry: geom, name: "bbox" })],
+          });
+          const bboxLayer = new VectorLayer({
+            source: bboxSource,
+            style: bboxStyle,
+            properties: { name: "bbox-overlay" },
+          });
+          bboxLayerRef.current = bboxLayer;
+          mapRef.current.addLayer(bboxLayer);
+
+          const extent = geom.getExtent();
+          if (isValidExtent(extent)) {
+            let fitExtent = extent;
+            if (extent[0] === extent[2] || extent[1] === extent[3]) {
+              fitExtent = [extent[0] - 100, extent[1] - 100, extent[2] + 100, extent[3] + 100];
+            }
+            mapRef.current.getView().fit(fitExtent, { padding: [40, 40, 40, 40], duration: 800 });
+          }
+        }
+      } catch (bboxErr) {
+        console.warn("Could not render bbox overlay:", bboxErr);
+      }
+    }
+  }, [activeGeojson, activeBbox]);
+
+  useEffect(() => {
+    if (overlayLayerRef.current) {
+      overlayLayerRef.current.setOpacity(overlayOpacity ?? 0.70);
+    }
+  }, [overlayOpacity]);
 
   const handleBaseToggle = (next) => {
     setBaseImagery(next);

@@ -7,7 +7,7 @@ non-file form fields after the controller has parsed GeoTIFFs.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +17,10 @@ class TaskType(str, Enum):
     SINGLE_IMAGE_GROUNDING = "single_image_grounding"
     CROSS_MODAL_JOINT_ANALYSIS = "cross_modal_joint_analysis"
     SINGLE_IMAGE_VQA = "single_image_vqa"
+    SINGLE_GROUNDING = "single_grounding"
+    SINGLE_VQA = "single_vqa"
+    BITEMPORAL_CHANGE = "bitemporal_change"
+    CROSS_MODAL = "cross_modal"
 
 
 class AnalyzeFormFields(BaseModel):
@@ -37,6 +41,10 @@ class AnalyzeResponseEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: str = "ok"
+    task_type: Optional[str] = None
+    models_executed: list[str] = Field(default_factory=list)
+    input_metadata: Optional[dict[str, Any]] = None
+    confidence: Optional[float] = None
     geojson: Optional[dict] = None
     change_overlay_uri: Optional[str] = None
     trace: dict
@@ -49,6 +57,10 @@ class QueryResponseEnvelope(BaseModel):
 
     status: str = "ok"
     answer: str
+    task_type: Optional[str] = None
+    models_executed: list[str] = Field(default_factory=list)
+    input_metadata: Optional[dict[str, Any]] = None
+    confidence: Optional[float] = None
     geojson: Optional[dict] = None
     bbox: Optional[list[float]] = None
     change_mask: Optional[dict] = None
