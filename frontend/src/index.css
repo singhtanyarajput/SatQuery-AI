@@ -11,6 +11,10 @@
   .dark body {
     @apply bg-[#0B111E] text-slate-100;
   }
+
+  .font-handwriting {
+    font-family: 'Caveat', cursive, sans-serif;
+  }
 }
 
 /* Custom subtle scrollbars */

@@ -1,4 +1,8 @@
-// reportsData.js
+// update_reports_data.cjs
+const fs = require('fs');
+const path = require('path');
+
+const content = `// reportsData.js
 // Multimodal Remote-Sensing Intelligence Archive for SatQuery AI.
 // All imagery represents genuine top-down Earth Observation satellite data
 // and adheres strictly to the Consistency Rule:
@@ -13,7 +17,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0621",
     title: "Water Body Extraction",
     location: "Godavari Basin, Maharashtra",
-    coordinates: "19°51'00\" N, 79°07'12\" E",
+    coordinates: "19°51'00\\\" N, 79°07'12\\\" E",
     type: "Water Detection",
     category: "OPTICAL + SAR",
     typeColor: "cyan",
@@ -77,7 +81,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0932",
     title: "Flood Risk Assessment",
     location: "Brahmaputra Basin, Assam",
-    coordinates: "26°12'00\" N, 92°55'48\" E",
+    coordinates: "26°12'00\\\" N, 92°55'48\\\" E",
     type: "Flood Risk",
     category: "SINGLE IMAGE",
     typeColor: "red",
@@ -140,7 +144,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0784",
     title: "Vegetation Health Analysis",
     location: "Punjab Agricultural Belt",
-    coordinates: "30°54'00\" N, 75°51'36\" E",
+    coordinates: "30°54'00\\\" N, 75°51'36\\\" E",
     type: "Vegetation / NDVI",
     category: "SINGLE IMAGE",
     typeColor: "green",
@@ -201,7 +205,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0519",
     title: "Land Cover Change Detection",
     location: "Kochi Wetland Belt, Kerala",
-    coordinates: "9°58'00\" N, 76°17'00\" E",
+    coordinates: "9°58'00\\\" N, 76°17'00\\\" E",
     type: "Land Cover Change",
     category: "CHANGE DETECTION",
     typeColor: "amber",
@@ -264,7 +268,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0412",
     title: "Cyclone Impact Assessment",
     location: "Paradip Coastline, Odisha",
-    coordinates: "20°15'36\" N, 86°40'12\" E",
+    coordinates: "20°15'36\\\" N, 86°40'12\\\" E",
     type: "Disaster Assessment",
     category: "SINGLE IMAGE",
     typeColor: "red",
@@ -325,7 +329,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0391",
     title: "Infrastructure Risk Analysis",
     location: "Mundra Port Complex, Gujarat",
-    coordinates: "22°45'00\" N, 69°42'36\" E",
+    coordinates: "22°45'00\\\" N, 69°42'36\\\" E",
     type: "Infrastructure",
     category: "SINGLE IMAGE",
     typeColor: "purple",
@@ -386,7 +390,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0275",
     title: "Urban Growth Monitoring",
     location: "Bellandur-ORR Corridor, Bengaluru",
-    coordinates: "12°55'48\" N, 77°40'48\" E",
+    coordinates: "12°55'48\\\" N, 77°40'48\\\" E",
     type: "Urban Analysis",
     category: "CHANGE DETECTION",
     typeColor: "amber",
@@ -449,7 +453,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0182",
     title: "Coastal Erosion Analysis",
     location: "Coromandel Coast, Tamil Nadu",
-    coordinates: "11°55'48\" N, 79°50'24\" E",
+    coordinates: "11°55'48\\\" N, 79°50'24\\\" E",
     type: "Coastal Dynamics",
     category: "CHANGE DETECTION",
     typeColor: "cyan",
@@ -512,7 +516,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0104",
     title: "Airfield Infrastructure VQA",
     location: "IGI Airport (DEL), New Delhi",
-    coordinates: "28°33'36\" N, 77°06'00\" E",
+    coordinates: "28°33'36\\\" N, 77°06'00\\\" E",
     type: "Visual QA",
     category: "SINGLE IMAGE",
     typeColor: "purple",
@@ -573,7 +577,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0067",
     title: "Mangrove Delta Scene Description",
     location: "Sundarbans National Park, West Bengal",
-    coordinates: "21°56'24\" N, 88°53'24\" E",
+    coordinates: "21°56'24\\\" N, 88°53'24\\\" E",
     type: "Scene Description",
     category: "SINGLE IMAGE",
     typeColor: "cyan",
@@ -634,7 +638,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0043",
     title: "Industrial Region Grounding",
     location: "Jamnagar Petrochemical Complex, Gujarat",
-    coordinates: "22°21'36\" N, 69°51'36\" E",
+    coordinates: "22°21'36\\\" N, 69°51'36\\\" E",
     type: "Region Grounding",
     category: "SINGLE IMAGE",
     typeColor: "purple",
@@ -695,7 +699,7 @@ export const INITIAL_ANALYSES = [
     id: "AN-2025-0019",
     title: "Drought & Reservoir Monitoring",
     location: "Jaikwadi Dam Basin, Marathwada",
-    coordinates: "19°29'00\" N, 75°22'12\" E",
+    coordinates: "19°29'00\\\" N, 75°22'12\\\" E",
     type: "Water Detection",
     category: "CHANGE DETECTION",
     typeColor: "cyan",
@@ -828,3 +832,7 @@ export const LOCATIONS = [
 ];
 
 export const STATUS_OPTIONS = ["All Statuses", "Completed", "Processing"];
+`;
+
+fs.writeFileSync(path.join(__dirname, 'src', 'mock', 'reportsData.js'), content, 'utf8');
+console.log('Successfully updated reportsData.js with direct physical image URLs!');
