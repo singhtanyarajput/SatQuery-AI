@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+
+pytest.importorskip("torch")
 import torch
 
 from app.services.geospatial.spectral import calculate_spectral_indices, generate_n_channel_tensor

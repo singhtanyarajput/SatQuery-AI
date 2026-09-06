@@ -40,3 +40,19 @@ class AnalyzeResponseEnvelope(BaseModel):
     geojson: Optional[dict] = None
     change_overlay_uri: Optional[str] = None
     trace: dict
+
+
+class QueryResponseEnvelope(BaseModel):
+    """POST /api/v1/query — answer, OpenLayers geometry, and audit summary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = "ok"
+    answer: str
+    geojson: Optional[dict] = None
+    bbox: Optional[list[float]] = None
+    change_mask: Optional[dict] = None
+    change_overlay_uri: Optional[str] = None
+    audit_summary: dict
+    trace: dict
+    report: dict = Field(default_factory=dict)

@@ -114,12 +114,18 @@ class TemporalChangeVQA:
         self.tda.eval()
         self.text_decoder.eval()
         self.vlm = LocalVisionLanguageClient()
-        ckpt = settings.LOCAL_MODELS_DIR / "change_vqa" / "temporal_attn.pt"
-        if settings.CHANGE_VQA_CHECKPOINT:
-            ckpt = Path(settings.CHANGE_VQA_CHECKPOINT)
+        ckpt = settings.resolved_cdvqa()
+        legacy = settings.LOCAL_MODELS_DIR / "change_vqa" / "temporal_attn.pt"
+        if not ckpt.exists() and legacy.exists():
+            ckpt = legacy
         if ckpt.exists():
             state = torch.load(ckpt, map_location=self.device)
-            if isinstance(state, dict):
+            if isinstance(state, dict) and "tda" in state:
+                self.encoder.load_state_dict(state["encoder"], strict=False)
+                self.tda.load_state_dict(state["tda"], strict=False)
+                if "text_decoder" in state:
+                    self.text_decoder.load_state_dict(state["text_decoder"], strict=False)
+            elif isinstance(state, dict):
                 self.tda.load_state_dict(state, strict=False)
             logger.info("change_vqa_weights_loaded", extra={"path": str(ckpt)})
 
@@ -163,6 +169,7 @@ class TemporalChangeVQA:
                 "change_fraction": float((mask > 0.5).mean()),
                 "tokens": token_text,
                 "vlm": vlm.params,
+                "weights_path": str(settings.resolved_cdvqa()),
             },
         )
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+import sys
 from pathlib import Path
 
 import rasterio
@@ -55,6 +56,16 @@ def _include_existing_routers() -> None:
         app.include_router(analyze_router, prefix="/api/v1/satquery", tags=["satquery"])
     except ImportError:
         logger.warning("analyze router not mounted")
+    current_dir = Path(__file__).resolve().parent
+    if str(current_dir) not in sys.path:
+        sys.path.insert(0, str(current_dir))
+    if str(current_dir.parent) not in sys.path:
+        sys.path.insert(0, str(current_dir.parent))
+    try:
+        from api.routes import router as query_router
+    except (ImportError, ModuleNotFoundError):
+        from backend.api.routes import router as query_router
+    app.include_router(query_router, prefix="/api/v1", tags=["query"])
 
 
 _include_existing_routers()
@@ -132,6 +143,8 @@ async def root() -> dict[str, str]:
         "health": "/health",
         "upload": "/upload",
         "analyze": "/api/v1/satquery/analyze",
+        "query": "/api/v1/query",
+        "reports": "/api/v1/reports/{trace_id}",
         "docs": "/docs",
     }
 

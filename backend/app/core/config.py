@@ -75,6 +75,11 @@ class Settings(BaseSettings):
             return Path(self.BIGEARTHNET_CHECKPOINT)
         return self.LOCAL_MODELS_DIR / "bigearthnet" / "checkpoint.pt"
 
+    def resolved_cdvqa(self) -> Path:
+        if self.CHANGE_VQA_CHECKPOINT:
+            return Path(self.CHANGE_VQA_CHECKPOINT)
+        return self.LOCAL_MODELS_DIR / "cdvqa" / "checkpoint.pt"
+
 
 settings = Settings()
 settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

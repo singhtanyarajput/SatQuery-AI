@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.database.session import get_db
+from app.database.session import get_optional_db
 from app.schemas.trace import AuditableTraceLogSchema
 from app.schemas.validation import AnalyzeResponseEnvelope, TaskType
 from app.services.agent import SatQueryController
@@ -53,7 +53,7 @@ async def analyze(
     sar: UploadFile | None = File(default=None, description="Optional SAR GeoTIFF (RISAT)"),
     force_task: str | None = Form(default=None),
     use_mobilesam: bool = Form(default=True),
-    db: Session = Depends(get_db),
+    db: Session | None = Depends(get_optional_db),
 ) -> AnalyzeResponseEnvelope:
     """Accept multipart rasters, route through SatQueryController, return auditable trace."""
     forced: TaskType | None = None

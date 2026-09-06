@@ -165,6 +165,11 @@ class OpticalSarFusion:
                 "device": str(self.device),
                 "mask_mean": energy,
                 "d_model": self.d_model,
+                "weights_path": str(
+                    Path(settings.FUSION_CHECKPOINT)
+                    if settings.FUSION_CHECKPOINT
+                    else settings.LOCAL_MODELS_DIR / "fusion" / "cross_attention.pt"
+                ),
             },
         )
 
