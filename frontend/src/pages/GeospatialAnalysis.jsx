@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import GeospatialHero from "../components/geospatial/GeospatialHero";
 import QueryComposer from "../components/geospatial/QueryComposer";
 import ExampleChips from "../components/geospatial/ExampleChips";
-import DomainGalleryStrip from "../components/geospatial/DomainGalleryStrip";
 import AgenticRoutingModal from "../components/geospatial/AgenticRoutingModal";
 import AnalysisResultWorkspace from "../components/geospatial/AnalysisResultWorkspace";
 import { useTheme } from "../context/ThemeContext";
@@ -62,14 +61,6 @@ export default function GeospatialAnalysis() {
     }
   };
 
-  // Click on Bottom Domain Card
-  const handleSelectDomain = (domain) => {
-    setQuery(domain.query);
-    if (domain.preset) {
-      setAttachedFiles([domain.preset]);
-    }
-  };
-
   // Submit Query to run autonomous SatQuery Agent
   const handleSubmitAnalysis = () => {
     if (!query.trim() && attachedFiles.length === 0) return;
@@ -100,25 +91,25 @@ export default function GeospatialAnalysis() {
   const earthImageSrc = isDark ? "/satellite/earth_night_curve.jpg" : "/satellite/earth_globe_curve.jpg";
 
   return (
-    <div className="relative min-h-[calc(100vh-8rem)] w-full flex flex-col items-center justify-start overflow-hidden">
+    <div className="relative min-h-[calc(100vh-4rem)] flex-1 w-full flex flex-col items-center justify-center overflow-hidden">
       
       {/* ============================================================ */}
       {/* STATE 1: CLEAN AI NEW CHAT LANDING SCREEN */}
       {/* ============================================================ */}
       {pageState === "idle" && (
-        <div className="relative w-full flex flex-col items-center z-10 animate-in fade-in duration-300 py-2 sm:py-3">
+        <div className="relative w-full min-h-[calc(100vh-4rem)] flex-1 flex flex-col items-center justify-center z-10 animate-in fade-in duration-300 py-6 px-4 sm:px-6">
           
           {/* Earth Background on the Left Edge (Dynamically adapted for Light / Dark mode) */}
-          <div className="absolute -left-12 sm:-left-8 lg:left-0 top-0 bottom-0 w-[260px] sm:w-[350px] lg:w-[430px] pointer-events-none select-none overflow-hidden z-0 opacity-85 sm:opacity-95 dark:opacity-90">
+          <div className="absolute left-0 top-0 bottom-0 w-[280px] sm:w-[380px] md:w-[450px] lg:w-[500px] xl:w-[540px] pointer-events-none select-none overflow-hidden z-0 opacity-90 sm:opacity-95 dark:opacity-90">
             <img
               src={earthImageSrc}
               alt="Earth Observation Orbit"
-              className="h-full w-full object-cover object-left [mask-image:linear-gradient(to_right,black_75%,transparent_100%)]"
+              className="h-full w-full object-cover object-left [mask-image:linear-gradient(to_right,black_65%,transparent_98%)]"
             />
           </div>
 
           {/* Bottom Left Note matching Reference Image */}
-          <div className="hidden xl:block absolute left-4 bottom-8 z-10 pointer-events-none text-left select-none">
+          <div className="hidden xl:block absolute left-6 bottom-6 z-10 pointer-events-none text-left select-none">
             {/* Mountain wireframe vector in dark mode */}
             {isDark && (
               <div className="mb-2 opacity-35">
@@ -158,7 +149,7 @@ export default function GeospatialAnalysis() {
           </div>
 
           {/* Central Hero Section */}
-          <div className="relative z-10 w-full flex flex-col items-center">
+          <div className="relative z-10 w-full max-w-4xl flex flex-col items-center my-auto">
             <GeospatialHero />
 
             {/* Main Query Composer Hero Card */}
@@ -175,8 +166,6 @@ export default function GeospatialAnalysis() {
             {/* Example Question Suggestion Chips */}
             <ExampleChips onSelectExample={handleSelectExample} />
 
-            {/* Bottom Domain Gallery Strip & Callout */}
-            <DomainGalleryStrip onSelectDomain={handleSelectDomain} />
           </div>
         </div>
       )}
@@ -192,7 +181,7 @@ export default function GeospatialAnalysis() {
       {/* STATE 3: RESULTS WORKSPACE */}
       {/* ============================================================ */}
       {pageState === "result" && currentAnalysis && (
-        <div className="relative w-full z-10">
+        <div className="relative w-full z-10 p-4 sm:p-6 lg:p-8">
           <AnalysisResultWorkspace
             analysisData={currentAnalysis}
             userQuery={query}
