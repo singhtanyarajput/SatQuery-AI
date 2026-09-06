@@ -5,14 +5,12 @@ import {
   Download,
   FileCode,
   X,
-  ShieldCheck,
   MapPin,
   Calendar,
   CheckCircle2,
-  Cpu,
-  Layers,
-  Sparkles,
   ExternalLink,
+  Sparkles,
+  ArrowDown,
 } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 
@@ -29,17 +27,17 @@ export default function ReportPreviewModal({
       const doc = new jsPDF();
       doc.setFont("helvetica", "bold");
       doc.setFontSize(18);
-      doc.text("SatQuery AI — Satellite Intelligence Report", 14, 20);
+      doc.text("SatQuery AI — Remote-Sensing Intelligence Report", 14, 20);
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
       doc.text(
-        `Report ID: ${report.id} | SIH26167 Air-Gapped Analysis`,
+        `Report ID: ${report.id} | Workflow: ${report.category || "Multimodal Remote-Sensing"}`,
         14,
         26
       );
       doc.text(
-        `Location: ${report.location} | Date: ${report.datetimeStr || `${report.date} ${report.time}`}`,
+        `Location: ${report.location} (${report.coordinates || "--"}) | Date: ${report.datetimeStr || `${report.date} ${report.time}`}`,
         14,
         32
       );
@@ -51,22 +49,28 @@ export default function ReportPreviewModal({
       doc.setFontSize(13);
       doc.text(report.title, 14, 46);
 
+      if (report.userQuery) {
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(10);
+        doc.text(`User Query: "${report.userQuery}"`, 14, 53);
+      }
+
       doc.setFont("helvetica", "bold");
       doc.setFontSize(11);
-      doc.text("Executive Summary:", 14, 56);
+      doc.text("Executive Summary:", 14, 63);
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
       const splitSummary = doc.splitTextToSize(report.summary, 180);
-      doc.text(splitSummary, 14, 64);
+      doc.text(splitSummary, 14, 71);
 
       doc.setFont("helvetica", "bold");
       doc.setFontSize(11);
-      doc.text("Key Findings & Observations:", 14, 90);
+      doc.text("Key Findings & Observations:", 14, 95);
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
-      let yPos = 98;
+      let yPos = 103;
       if (report.keyFindings) {
         report.keyFindings.forEach((kf) => {
           doc.text(`• ${kf}`, 14, yPos);
@@ -77,20 +81,37 @@ export default function ReportPreviewModal({
       yPos += 6;
       doc.setFont("helvetica", "bold");
       doc.setFontSize(11);
-      doc.text("Imagery & Verification Details:", 14, yPos);
+      doc.text("Remote-Sensing Telemetry & Sensors:", 14, yPos);
 
       yPos += 8;
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
       doc.text(`• Confidence Score: ${report.confidence}%`, 14, yPos);
       yPos += 6;
-      doc.text(`• Imagery Sensors: ${report.imagery || "Sentinel-1 SAR / Sentinel-2 MSI"}`, 14, yPos);
+      doc.text(`• Sensor Suite: ${report.sensor || "Sentinel-1 / Sentinel-2"}`, 14, yPos);
       yPos += 6;
       doc.text(`• Spatial Resolution: ${report.resolution || "10 m"}`, 14, yPos);
       yPos += 6;
-      doc.text(`• Cloud Cover: ${report.cloudCover || "4.2%"}`, 14, yPos);
+      doc.text(`• Cloud Cover: ${report.cloudCover || "0.0%"}`, 14, yPos);
       yPos += 6;
-      doc.text(`• Area Analyzed: ${report.areaAnalyzed || "142.6 km²"}`, 14, yPos);
+      doc.text(`• Area Analyzed: ${report.areaAnalyzed || "--"}`, 14, yPos);
+
+      yPos += 10;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text("Agentic Execution Summary:", 14, yPos);
+      yPos += 8;
+
+      if (report.executionTrace) {
+        report.executionTrace.slice(0, 5).forEach((step) => {
+          doc.setFont("helvetica", "bold");
+          doc.text(`Step ${step.step} (${step.name}):`, 14, yPos);
+          doc.setFont("helvetica", "normal");
+          const stepText = doc.splitTextToSize(step.detail, 130);
+          doc.text(stepText, 65, yPos);
+          yPos += 7;
+        });
+      }
 
       doc.save(`${report.id}_SatQuery_Report.pdf`);
       showToast?.(`Downloaded ${report.id} as PDF`);
@@ -117,26 +138,28 @@ export default function ReportPreviewModal({
     }
   };
 
+  const isOpticalSar = report.category === "OPTICAL + SAR";
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-dark-border dark:bg-dark-card">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-dark-border">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-md animate-fadeIn">
+      <div className="flex max-h-[92vh] w-full max-w-4xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-dark-border dark:bg-dark-card overflow-hidden">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-dark-border bg-slate-50/50 dark:bg-dark-sidebar/60">
           <div className="flex items-center space-x-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-400">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-950/80 dark:text-brand-400">
               <FileText className="h-5 w-5" />
             </div>
             <div>
               <div className="flex items-center space-x-2">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  SatQuery AI — Intelligence Report Preview
+                  SatQuery AI — Intelligence Report Dossier
                 </h3>
                 <span className="rounded bg-brand-100 px-2 py-0.5 text-[10px] font-semibold text-brand-700 dark:bg-brand-950 dark:text-brand-300">
                   {report.id}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                Air-gapped on-premise spatial intelligence compilation (SIH26167)
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Category: {report.category} · Sensor: {report.sensor}
               </p>
             </div>
           </div>
@@ -144,112 +167,212 @@ export default function ReportPreviewModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-dark-hover dark:hover:text-slate-200 transition"
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200/60 hover:text-slate-700 dark:hover:bg-dark-hover dark:hover:text-slate-200 transition"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Content Body */}
+        {/* Modal Body */}
         <div className="flex-1 space-y-5 overflow-y-auto p-6">
-          {/* Top Banner Summary */}
-          <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-4 dark:border-dark-border dark:bg-dark-bg/60">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="rounded-md border border-brand-200 bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-700 dark:border-brand-800 dark:bg-brand-950/80 dark:text-brand-300">
-                {report.type}
-              </span>
-              <div className="flex items-center space-x-3 text-xs text-slate-500 dark:text-slate-400">
-                <StatusBadge status={report.status} variant="pill" />
-                <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                  {report.confidence}% Confidence
+          {/* Top Banner & Imagery */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4 dark:border-dark-border dark:bg-dark-bg/60">
+            {/* Top-Down Satellite Image Preview */}
+            <div className="md:col-span-5 relative aspect-[16/11] w-full overflow-hidden rounded-xl bg-slate-900 border border-slate-200 dark:border-dark-border">
+              <img
+                src={report.resultImage || report.thumbnail || report.originalImage || "/satellite/water-result.jpg"}
+                alt={report.title}
+                className="h-full w-full object-cover"
+                onError={(e) => {
+                  e.currentTarget.src = "/satellite/water-result.jpg";
+                }}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent pointer-events-none" />
+              <div className="absolute bottom-2 left-2 right-2 text-[10px] text-slate-300 truncate">
+                {report.sensorCaption || report.sensor}
+              </div>
+            </div>
+
+            {/* Banner Metadata */}
+            <div className="md:col-span-7 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="rounded-md border border-brand-200 bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-700 dark:border-brand-800 dark:bg-brand-950/80 dark:text-brand-300">
+                  {report.type}
+                </span>
+                <div className="flex items-center space-x-3 text-xs">
+                  <StatusBadge status={report.status} variant="pill" />
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    {report.confidence}% Confidence
+                  </span>
+                </div>
+              </div>
+
+              <h4 className="text-lg font-bold text-slate-900 dark:text-white">
+                {report.title}
+              </h4>
+
+              {report.userQuery && (
+                <div className="rounded-lg bg-white p-2.5 dark:bg-dark-sidebar/40 border border-slate-200/60 dark:border-dark-border">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">
+                    User Query
+                  </span>
+                  <p className="text-xs text-slate-700 dark:text-slate-300 italic mt-0.5">
+                    "{report.userQuery}"
+                  </p>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500 dark:text-slate-400 pt-1">
+                <div className="flex items-center space-x-1.5">
+                  <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                  <span>{report.location}</span>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                  <span>{report.datetimeStr}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Visual Evidence Strip */}
+          {report.visualEvidence && (
+            <div className="space-y-2 rounded-xl border border-slate-100 bg-slate-50/50 p-4 dark:border-dark-border dark:bg-dark-sidebar/40">
+              <div className="flex items-center justify-between">
+                <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Visual Evidence: {report.visualEvidence.title}
+                </h5>
+                <span className="rounded bg-brand-100 px-2 py-0.5 text-[10px] font-bold text-brand-700 dark:bg-brand-950 dark:text-brand-300">
+                  {report.visualEvidence.step3Metric}
                 </span>
               </div>
-            </div>
 
-            <h4 className="mt-2.5 text-base font-bold text-slate-900 dark:text-white">
-              {report.title}
-            </h4>
+              <div className="grid grid-cols-3 gap-3 pt-1">
+                <div className="space-y-1">
+                  <div className="aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-900 border border-slate-200 dark:border-dark-border">
+                    <img
+                      src={report.visualEvidence?.step1Image || "/satellite/water-optical.jpg"}
+                      alt={report.visualEvidence?.step1Label || "Step 1"}
+                      className="h-full w-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.src = "/satellite/water-optical.jpg";
+                      }}
+                    />
+                  </div>
+                  <p className="text-[11px] font-medium text-slate-600 dark:text-slate-300 text-center">
+                    {report.visualEvidence?.step1Label}
+                  </p>
+                </div>
 
-            <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
-              <div className="flex items-center space-x-1.5">
-                <MapPin className="h-3.5 w-3.5 text-slate-400" />
-                <span>{report.location}</span>
+                <div className="space-y-1">
+                  <div className="aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-900 border border-slate-200 dark:border-dark-border">
+                    <img
+                      src={report.visualEvidence?.step2Image || "/satellite/water-optical.jpg"}
+                      alt={report.visualEvidence?.step2Label || "Step 2"}
+                      className="h-full w-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.src = "/satellite/water-optical.jpg";
+                      }}
+                    />
+                  </div>
+                  <p className="text-[11px] font-medium text-slate-600 dark:text-slate-300 text-center">
+                    {report.visualEvidence?.step2Label}
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-900 border border-brand-500/50">
+                    <img
+                      src={report.visualEvidence?.step3Image || report.resultImage || "/satellite/water-result.jpg"}
+                      alt={report.visualEvidence?.step3Label || "Result"}
+                      className="h-full w-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.src = "/satellite/water-result.jpg";
+                      }}
+                    />
+                  </div>
+                  <p className="text-[11px] font-semibold text-brand-600 dark:text-brand-400 text-center">
+                    {report.visualEvidence?.step3Label}
+                  </p>
+                </div>
               </div>
-              <div className="flex items-center space-x-1.5">
-                <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                <span>{report.datetimeStr || `${report.date}, ${report.time}`}</span>
+            </div>
+          )}
+
+          {/* Executive Summary & Key Findings */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Executive Summary
+              </h5>
+              <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200 bg-white p-3.5 rounded-xl border border-slate-100 dark:bg-dark-sidebar/40 dark:border-dark-border">
+                {report.summary}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Key Findings & Observations
+              </h5>
+              <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-3.5 dark:border-dark-border dark:bg-dark-sidebar/40">
+                <ul className="space-y-2 text-xs text-slate-700 dark:text-slate-200">
+                  {report.keyFindings?.map((item, idx) => (
+                    <li key={idx} className="flex items-start space-x-2">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500 mt-0.5 flex-shrink-0" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
           </div>
 
-          {/* Executive Summary */}
-          <div className="space-y-2">
-            <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Executive Summary
-            </h5>
-            <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200 bg-white p-3.5 rounded-xl border border-slate-100 dark:bg-dark-sidebar/40 dark:border-dark-border">
-              {report.summary}
-            </p>
-          </div>
-
-          {/* Key Findings */}
-          <div className="space-y-2">
-            <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Key Findings & Observations
-            </h5>
-            <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-3.5 dark:border-dark-border dark:bg-dark-sidebar/40">
-              <ul className="space-y-2 text-xs text-slate-700 dark:text-slate-200">
-                {report.keyFindings?.map((item, idx) => (
-                  <li key={idx} className="flex items-start space-x-2">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-500 mt-0.5 flex-shrink-0" />
-                    <span>{item}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          {/* Sensor Specs & Evidence */}
+          {/* Telemetry & Observable Execution Summary */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="rounded-xl border border-slate-100 bg-white p-4 dark:border-dark-border dark:bg-dark-sidebar/40 space-y-2.5">
               <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                Imagery & Sensor Details
+                Sensor & Spectral Telemetry
               </h5>
               <div className="space-y-1.5 text-xs">
                 <div className="flex justify-between text-slate-600 dark:text-slate-300">
                   <span className="text-slate-400">Sensors:</span>
-                  <span className="font-semibold text-right">{report.imagery || "Sentinel-1 / Sentinel-2"}</span>
+                  <span className="font-semibold text-right">{report.sensor}</span>
                 </div>
                 <div className="flex justify-between text-slate-600 dark:text-slate-300">
-                  <span className="text-slate-400">Resolution:</span>
-                  <span className="font-semibold">{report.resolution || "10 m"}</span>
+                  <span className="text-slate-400">Spatial Resolution:</span>
+                  <span className="font-semibold">{report.resolution}</span>
                 </div>
                 <div className="flex justify-between text-slate-600 dark:text-slate-300">
                   <span className="text-slate-400">Cloud Cover:</span>
-                  <span className="font-semibold">{report.cloudCover || "4.2%"}</span>
+                  <span className="font-semibold">{report.cloudCover}</span>
                 </div>
                 <div className="flex justify-between text-slate-600 dark:text-slate-300">
                   <span className="text-slate-400">Area Analyzed:</span>
-                  <span className="font-semibold">{report.areaAnalyzed || "142.6 km²"}</span>
+                  <span className="font-semibold">{report.areaAnalyzed}</span>
                 </div>
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-100 bg-white p-4 dark:border-dark-border dark:bg-dark-sidebar/40 space-y-2.5">
+            <div className="rounded-xl border border-slate-100 bg-white p-4 dark:border-dark-border dark:bg-dark-sidebar/40 space-y-2">
               <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                Evidence Layers
+                Agentic Pipeline Execution
               </h5>
-              <div className="space-y-2">
-                {report.evidenceLayers?.map((layer, idx) => (
+              <div className="space-y-1.5 text-xs max-h-36 overflow-y-auto pr-1">
+                {report.executionTrace?.map((step) => (
                   <div
-                    key={idx}
-                    className="flex items-center justify-between text-xs rounded-lg bg-slate-50 px-2.5 py-1.5 dark:bg-dark-bg/60"
+                    key={step.step}
+                    className="flex items-start justify-between text-[11px] rounded-lg bg-slate-50 p-1.5 dark:bg-dark-bg/60"
                   >
-                    <span className="text-slate-700 dark:text-slate-300 font-medium line-clamp-1">
-                      {layer.name}
-                    </span>
-                    <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 ml-2">
-                      {layer.confidence}
+                    <div>
+                      <span className="font-bold text-slate-800 dark:text-slate-200">
+                        {step.step}. {step.name}:
+                      </span>{" "}
+                      <span className="text-slate-600 dark:text-slate-300">
+                        {step.detail}
+                      </span>
+                    </div>
+                    <span className="font-mono text-[9px] text-slate-400 ml-2">
+                      {step.timestamp}
                     </span>
                   </div>
                 ))}
@@ -258,21 +381,19 @@ export default function ReportPreviewModal({
           </div>
         </div>
 
-        {/* Action Footer */}
+        {/* Modal Footer */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/50 p-4 dark:border-dark-border dark:bg-dark-bg/40">
-          <div className="flex items-center space-x-2">
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onOpenWorkspace(report);
-              }}
-              className="flex items-center space-x-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-dark-border dark:bg-dark-card dark:text-slate-200 dark:hover:bg-dark-hover transition"
-            >
-              <ExternalLink className="h-3.5 w-3.5 text-slate-400" />
-              <span>Open in Workspace</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenWorkspace(report);
+            }}
+            className="flex items-center space-x-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-dark-border dark:bg-dark-card dark:text-slate-200 dark:hover:bg-dark-hover transition"
+          >
+            <ExternalLink className="h-3.5 w-3.5 text-slate-400" />
+            <span>Open in Geospatial Workspace</span>
+          </button>
 
           <div className="flex items-center space-x-2.5">
             <button
