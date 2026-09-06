@@ -15,9 +15,10 @@ import {
   Cpu,
   X,
   ExternalLink,
+  Menu,
 } from "lucide-react";
 
-export default function Sidebar({ isCollapsed }) {
+export default function Sidebar({ isCollapsed, onToggle, onClose }) {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSystemModal, setShowSystemModal] = useState(false);
   const profileMenuRef = useRef(null);
@@ -54,9 +55,15 @@ export default function Sidebar({ isCollapsed }) {
         }`}
       >
         {/* Top Branding Area inside sidebar */}
-        <div className="flex h-16 items-center border-b border-slate-100 px-5 dark:border-dark-border">
-          <NavLink to="/workspace" className="flex items-center space-x-3 overflow-hidden">
-            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-brand-600 to-cyan-500 shadow-md shadow-brand-500/20 text-white">
+        <div className="flex h-16 items-center justify-between border-b border-slate-100 px-3.5 dark:border-dark-border">
+          {isCollapsed ? (
+            <button
+              type="button"
+              onClick={onToggle}
+              className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-brand-600 to-cyan-500 shadow-md shadow-brand-500/20 text-white transition-transform hover:scale-105 cursor-pointer"
+              title="Open sidebar"
+              aria-label="Open sidebar"
+            >
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -68,18 +75,45 @@ export default function Sidebar({ isCollapsed }) {
               >
                 <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
               </svg>
-            </div>
-            {!isCollapsed && (
-              <div className="flex flex-col">
-                <span className="text-base font-bold tracking-tight text-slate-900 dark:text-white">
-                  SatQuery AI
-                </span>
-                <span className="text-[11px] font-medium text-slate-400">
-                  Satellite Intelligence
-                </span>
-              </div>
-            )}
-          </NavLink>
+            </button>
+          ) : (
+            <>
+              <NavLink to="/workspace" className="flex items-center space-x-2.5 overflow-hidden">
+                <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-brand-600 to-cyan-500 shadow-md shadow-brand-500/20 text-white">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-4.5 w-4.5"
+                  >
+                    <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+                  </svg>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm font-bold tracking-tight text-slate-900 dark:text-white leading-tight">
+                    SatQuery AI
+                  </span>
+                  <span className="text-[10px] font-medium text-slate-400 leading-tight">
+                    Satellite Intelligence
+                  </span>
+                </div>
+              </NavLink>
+
+              {/* Mark symbol (Hamburger menu icon) to close sidebar */}
+              <button
+                type="button"
+                onClick={onClose || onToggle}
+                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:border-dark-border dark:text-slate-300 dark:hover:bg-dark-hover dark:hover:text-white cursor-pointer"
+                title="Close sidebar"
+                aria-label="Close sidebar"
+              >
+                <Menu className="h-4.5 w-4.5" />
+              </button>
+            </>
+          )}
         </div>
 
         {/* Main Nav Items */}
