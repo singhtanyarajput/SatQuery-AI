@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
-  Menu,
   ShieldCheck,
   Activity,
   Calendar,
@@ -21,9 +20,10 @@ import {
 import { useTheme } from "../../context/ThemeContext";
 import { MOCK_ALERTS } from "../../mock/mockData";
 
-export default function TopNavbar({ onToggleSidebar, isSidebarCollapsed }) {
+export default function TopNavbar({ onToggleSidebar, onOpenSidebar, isSidebarCollapsed }) {
   const { theme, toggleTheme } = useTheme();
   const [currentTime, setCurrentTime] = useState(new Date());
+  const navigate = useNavigate();
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -42,23 +42,28 @@ export default function TopNavbar({ onToggleSidebar, isSidebarCollapsed }) {
     hour12: true,
   })}`;
 
+  const handleTopLogoClick = () => {
+    if (isSidebarCollapsed) {
+      if (onOpenSidebar) onOpenSidebar();
+      else if (onToggleSidebar) onToggleSidebar();
+    } else {
+      navigate("/workspace");
+    }
+  };
+
   return (
     <>
-      <header className="sticky top-0 z-30 flex h-16 w-full flex-shrink-0 items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur-md transition-colors duration-200 dark:border-dark-border dark:bg-dark-card/95">
-        {/* Left Side: Collapse Toggle & Branding */}
+<header className="sticky top-0 z-30 flex h-16 w-full flex-shrink-0 items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur-md transition-colors duration-200">
+        {/* Left Side: AI Logo & Branding (Clicking opens sidebar when collapsed) */}
         <div className="flex items-center space-x-3 sm:space-x-4">
           <button
             type="button"
-            onClick={onToggleSidebar}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:border-dark-border dark:text-slate-300 dark:hover:bg-dark-hover dark:hover:text-white"
-            title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label="Toggle sidebar"
+            onClick={handleTopLogoClick}
+            className="flex items-center space-x-2.5 text-left group cursor-pointer focus:outline-none"
+            title={isSidebarCollapsed ? "Click to open sidebar" : "SatQuery AI Workspace"}
+            aria-label={isSidebarCollapsed ? "Open sidebar" : "SatQuery AI Workspace"}
           >
-            <Menu className="h-5 w-5" />
-          </button>
-
-          <Link to="/workspace" className="flex items-center space-x-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-tr from-brand-600 to-cyan-500 shadow-sm shadow-brand-500/20 text-white">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-tr from-brand-600 to-cyan-500 shadow-sm shadow-brand-500/20 text-white group-hover:scale-105 transition-transform">
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -81,7 +86,7 @@ export default function TopNavbar({ onToggleSidebar, isSidebarCollapsed }) {
                 Satellite Intelligence
               </p>
             </div>
-          </Link>
+          </button>
         </div>
 
         {/* Center / Date & Time */}

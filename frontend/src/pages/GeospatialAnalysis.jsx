@@ -3,6 +3,13 @@ import LayerControl from "../components/workspace/LayerControl";
 import EmptyStateWorkspace from "../components/workspace/EmptyStateWorkspace";
 import ChatPanel from "../components/workspace/ChatPanel";
 import MapViewer from "../components/MapViewer";
+import GeospatialHero from "../components/geospatial/GeospatialHero";
+import QueryComposer from "../components/geospatial/QueryComposer";
+import ExampleChips from "../components/geospatial/ExampleChips";
+import AgenticRoutingModal from "../components/geospatial/AgenticRoutingModal";
+import AnalysisResultWorkspace from "../components/geospatial/AnalysisResultWorkspace";
+import { useTheme } from "../context/ThemeContext";
+import { resolveAnalysisRouting } from "../mock/geospatialAnalyses";
 import {
   Maximize2,
   Minimize2,
@@ -131,7 +138,7 @@ export default function GeospatialAnalysis() {
     setOtherLayers((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const toggleFullscreen = () => {
+const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
       setIsFullscreen(true);
@@ -143,18 +150,9 @@ export default function GeospatialAnalysis() {
     }
   };
 
-  return (
-    <div className="flex flex-col gap-5 font-sans antialiased w-full">
-      {/* 1. Page Header: Title section (top) */}
-      <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-2xl">
-            Geospatial AI Analysis
-          </h1>
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            Ask questions, analyze satellite imagery, and extract actionable insights.
-          </p>
-        </div>
+  // Submit Query to run autonomous SatQuery Agent
+  const handleSubmitAnalysis = () => {
+    if (!query.trim() && attachedFiles.length === 0) return;
 
         {/* Open in Fullscreen Button */}
         <button
@@ -258,45 +256,36 @@ export default function GeospatialAnalysis() {
                 <Filter className="h-3.5 w-3.5" />
               </button>
 
-              {filterOpen && (
-                <div className="absolute left-0 top-full z-30 mt-1.5 w-52 rounded-xl border border-slate-200 bg-white p-2.5 shadow-xl ring-1 ring-black/5 dark:border-dark-border dark:bg-dark-card text-xs">
-                  <p className="px-1 py-0.5 font-semibold text-slate-500 dark:text-slate-400 text-[10px] uppercase">Filter Imagery</p>
-                  <div className="mt-1 space-y-1.5">
-                    <label className="flex items-center space-x-2 px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-dark-hover cursor-pointer">
-                      <input type="checkbox" className="rounded text-brand-600 focus:ring-0" defaultChecked />
-                      <span className="text-slate-700 dark:text-slate-200">Cloud Cover &lt; 20%</span>
-                    </label>
-                    <label className="flex items-center space-x-2 px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-dark-hover cursor-pointer">
-                      <input type="checkbox" className="rounded text-brand-600 focus:ring-0" defaultChecked />
-                      <span className="text-slate-700 dark:text-slate-200">High Resolution Only</span>
-                    </label>
-                  </div>
-                </div>
-              )}
-            </div>
+  return (
+    <div className="relative min-h-[calc(100vh-4rem)] flex-1 w-full flex flex-col items-center justify-center overflow-hidden">
+      
+      {/* ============================================================ */}
+      {/* STATE 1: CLEAN AI NEW CHAT LANDING SCREEN */}
+      {/* ============================================================ */}
+      {pageState === "idle" && (
+        <div className="relative w-full min-h-[calc(100vh-4rem)] flex-1 flex flex-col items-center justify-center z-10 animate-in fade-in duration-300 py-6 px-4 sm:px-6">
+          
+          {/* Earth Background on the Left Edge (Dynamically adapted for Light / Dark mode) */}
+          <div className="absolute left-0 top-0 bottom-0 w-[280px] sm:w-[380px] md:w-[450px] lg:w-[500px] xl:w-[540px] pointer-events-none select-none overflow-hidden z-0 opacity-90 sm:opacity-95 dark:opacity-90">
+            <img
+              src={earthImageSrc}
+              alt="Earth Observation Orbit"
+              className="h-full w-full object-cover object-left [mask-image:linear-gradient(to_right,black_65%,transparent_98%)]"
+            />
           </div>
 
-          {/* Right Toolbar Controls: T1 Date, vs, T2 Date, Compare Button */}
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            {/* T1 Date Selector */}
-            <div className="relative flex items-center rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 shadow-2xs dark:border-dark-border dark:bg-dark-card" ref={t1PickerRef}>
-              <span className="mr-2 rounded bg-brand-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-xs">
-                T1
-              </span>
-              <input
-                type="text"
-                readOnly
-                value={t1Date || "Select date"}
-                onClick={() => setShowT1Picker(!showT1Picker)}
-                className="w-20 cursor-pointer bg-transparent text-xs font-medium text-slate-700 focus:outline-none dark:text-slate-200"
-              />
-              <button
-                type="button"
-                onClick={() => setShowT1Picker(!showT1Picker)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                <Calendar className="h-3.5 w-3.5" />
-              </button>
+          {/* Bottom Left Note matching Reference Image */}
+          <div className="hidden xl:block absolute left-6 bottom-6 z-10 pointer-events-none text-left select-none">
+            {/* Mountain wireframe vector in dark mode */}
+            {isDark && (
+              <div className="mb-2 opacity-35">
+                <svg className="w-24 h-8 text-blue-400" viewBox="0 0 100 35" fill="none" stroke="currentColor" strokeWidth="1">
+                  <path d="M 0 32 L 20 12 L 35 24 L 55 4 L 75 22 L 90 14 L 100 32" />
+                  <path d="M 12 24 L 20 12 L 28 24" />
+                  <path d="M 45 18 L 55 4 L 65 18" />
+                </svg>
+              </div>
+            )}
 
               {showT1Picker && (
                 <div className="absolute right-0 top-full z-30 mt-1.5 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-dark-border dark:bg-dark-card">
@@ -439,28 +428,45 @@ export default function GeospatialAnalysis() {
             </span>
           </div>
 
+          {/* Central Hero Section */}
+          <div className="relative z-10 w-full max-w-4xl flex flex-col items-center my-auto">
+            <GeospatialHero />
+
+            {/* Main Query Composer Hero Card */}
+            <QueryComposer
+              query={query}
+              onQueryChange={setQuery}
+              attachedFiles={attachedFiles}
+              onAddFiles={handleAddFiles}
+              onRemoveFile={handleRemoveFile}
+              onSubmit={handleSubmitAnalysis}
+              isAnalyzing={false}
+            />
+
           <span className="hidden sm:inline text-slate-300 dark:text-slate-700">|</span>
 
-          <div>
-            <span>Resolution: </span>
-            <span className="font-medium text-slate-800 dark:text-slate-200">--</span>
-          </div>
-
-          <span className="hidden sm:inline text-slate-300 dark:text-slate-700">|</span>
-
-          <div>
-            <span>Cloud Cover: </span>
-            <span className="font-medium text-slate-800 dark:text-slate-200">--</span>
           </div>
         </div>
+      )}
 
-        {/* Right Status Tip */}
-        <div className="flex items-center space-x-1.5 text-slate-500 dark:text-slate-400">
-          <span>Tip:</span>
-          <span className="cursor-pointer font-medium text-brand-600 hover:underline dark:text-brand-400">
-            Select an area and ask a question to begin analysis.
-          </span>
-          <Info className="h-3.5 w-3.5 text-brand-600 dark:text-brand-400" />
+      {/* ============================================================ */}
+      {/* STATE 2: AGENTIC ROUTING PROGRESS MODAL */}
+      {/* ============================================================ */}
+      {pageState === "analyzing" && (
+        <AgenticRoutingModal onComplete={handleAgenticComplete} />
+      )}
+
+      {/* ============================================================ */}
+      {/* STATE 3: RESULTS WORKSPACE */}
+      {/* ============================================================ */}
+      {pageState === "result" && currentAnalysis && (
+        <div className="relative w-full z-10 p-4 sm:p-6 lg:p-8">
+          <AnalysisResultWorkspace
+            analysisData={currentAnalysis}
+            userQuery={query}
+            attachedFiles={attachedFiles}
+            onResetToNewChat={handleResetToNewChat}
+          />
         </div>
       </div>
     </div>
