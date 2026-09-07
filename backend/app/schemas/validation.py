@@ -21,6 +21,7 @@ class TaskType(str, Enum):
     SINGLE_VQA = "single_vqa"
     BITEMPORAL_CHANGE = "bitemporal_change"
     CROSS_MODAL = "cross_modal"
+    DOMAIN_KNOWLEDGE_QA = "domain_knowledge_qa"
 
 
 class AnalyzeFormFields(BaseModel):
@@ -58,6 +59,7 @@ class QueryResponseEnvelope(BaseModel):
     status: str = "ok"
     answer: str
     task_type: Optional[str] = None
+    headline: Optional[str] = None
     models_executed: list[str] = Field(default_factory=list)
     input_metadata: Optional[dict[str, Any]] = None
     confidence: Optional[float] = None

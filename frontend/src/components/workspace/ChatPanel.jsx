@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Sparkles, ChevronUp, ChevronDown, MessageSquare, ArrowRight, Send, ImagePlus } from "lucide-react";
+import { extractErrorMessage, prepareUploadFiles } from "../../pages/GeospatialAnalysis";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -36,15 +37,16 @@ export default function ChatPanel({
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!inputValue.trim()) return;
-    if (!files.length) {
-      setError("Attach at least one GeoTIFF or PNG/JPEG scene.");
-      return;
-    }
     setBusy(true);
     setError(null);
     const body = new FormData();
     body.append("query", inputValue.trim());
-    files.forEach((file) => body.append("files", file));
+    const normalizedFiles = await prepareUploadFiles(files);
+    if (normalizedFiles && normalizedFiles.length > 0) {
+      for (const fileItem of normalizedFiles) {
+        body.append("files", fileItem, fileItem.name || "satellite_scene.png");
+      }
+    }
     try {
       const res = await fetch(`${API_BASE}/api/v1/query`, {
         method: "POST",
@@ -52,7 +54,7 @@ export default function ChatPanel({
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(payload.detail || `Query failed (${res.status})`);
+        throw new Error(extractErrorMessage(payload) || `Query failed (${res.status})`);
       }
       setAnswer(payload.answer);
       setAudit(payload.audit_summary);
@@ -61,7 +63,7 @@ export default function ChatPanel({
         new CustomEvent("satquery:analysis-complete", { detail: payload })
       );
     } catch (err) {
-      setError(err.message || String(err));
+      setError(extractErrorMessage(err));
     } finally {
       setBusy(false);
     }

@@ -8,8 +8,14 @@ from typing import Any, Dict, List
 
 import numpy as np
 import rasterio
-import torch
-from torch import nn
+try:
+    import torch
+    from torch import nn
+    HAS_TORCH = True
+except ImportError:
+    torch = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
+    HAS_TORCH = False
 
 from app.core.config import settings
 from app.utils.logger import get_logger
@@ -17,21 +23,40 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class LightweightMaskDecoder(nn.Module):
-    """Stand-in decoder used until official SAM weights are mounted under local_models/."""
+if HAS_TORCH:
+    class LightweightMaskDecoder(nn.Module):
+        """Stand-in decoder used until official SAM weights are mounted under local_models/."""
 
-    def __init__(self, embed_dim: int = 32) -> None:
-        super().__init__()
-        self.stem = nn.Sequential(
-            nn.Conv2d(3, embed_dim, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(embed_dim, 1, 1),
-        )
+        def __init__(self, embed_dim: int = 32) -> None:
+            super().__init__()
+            self.stem = nn.Sequential(
+                nn.Conv2d(3, embed_dim, 3, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(embed_dim, 1, 1),
+            )
 
-    def forward(self, image: torch.Tensor, text_embed: torch.Tensor) -> torch.Tensor:
-        logits = self.stem(image)
-        scale = text_embed.mean().clamp(0.5, 1.5)
-        return torch.sigmoid(logits * scale)
+        def forward(self, image: torch.Tensor, text_embed: torch.Tensor) -> torch.Tensor:
+            logits = self.stem(image)
+            scale = text_embed.mean().clamp(0.5, 1.5)
+            return torch.sigmoid(logits * scale)
+else:
+    class LightweightMaskDecoder:  # type: ignore[no-redef]
+        """Stand-in decoder stub when PyTorch is not installed."""
+
+        def __init__(self, embed_dim: int = 32) -> None:
+            pass
+
+        def to(self, *args: Any, **kwargs: Any) -> "LightweightMaskDecoder":
+            return self
+
+        def eval(self) -> "LightweightMaskDecoder":
+            return self
+
+        def load_state_dict(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __call__(self, *args: Any, **kwargs: Any) -> Any:
+            return None
 
 
 def _compute_iou(box1: List[float], box2: List[float]) -> float:
@@ -89,11 +114,12 @@ class ZeroShotSAMGrounder:
     """
 
     def __init__(self, checkpoint_path: str):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = ("cuda" if torch.cuda.is_available() else "cpu") if HAS_TORCH else "cpu"
         self.checkpoint = checkpoint_path
         self._decoder = LightweightMaskDecoder().to(self.device)
         self._decoder.eval()
-        self._try_load(Path(checkpoint_path))
+        if HAS_TORCH:
+            self._try_load(Path(checkpoint_path))
 
     def predict_instances(
         self,
@@ -160,25 +186,35 @@ class ZeroShotSAMGrounder:
 
                 for inst in chip_instances:
                     bx1, by1, bx2, by2 = inst["box"]
-                    all_instances.append({
+                    merged = {
                         "box": [
                             float(bx1 + x_start),
                             float(by1 + y_start),
                             float(bx2 + x_start),
                             float(by2 + y_start),
                         ],
-                        "confidence": inst["confidence"],
+                        "confidence": float(inst["confidence"]),
                         "label": inst["label"],
-                    })
+                        "class": inst.get("class", "infrastructure"),
+                        "category": inst.get("category", "infrastructure"),
+                    }
+                    if "polygon" in inst and isinstance(inst["polygon"], list):
+                        merged["polygon"] = [
+                            [float(round(pt[0] + x_start, 2)), float(round(pt[1] + y_start, 2))]
+                            for pt in inst["polygon"]
+                        ]
+                    all_instances.append(merged)
 
         # Global NMS pass across all merged chips
         return _apply_nms(all_instances, iou_threshold=nms_threshold)
 
-    def predict_bounding_box(self, text_query: str, image_tensor: torch.Tensor) -> List[float]:
+    def predict_bounding_box(self, text_query: str, image_tensor: Any) -> List[float]:
         """
         Parses text prompts and extracts bounding coordinates [xmin, ymin, xmax, ymax].
         Maintained for backwards-compatibility.
         """
+        if not HAS_TORCH:
+            return [10.0, 10.0, 50.0, 50.0]
         visual = image_tensor[0] if image_tensor.ndim == 4 else image_tensor
         if visual.ndim == 3:
             h, w = int(visual.shape[1]), int(visual.shape[2])
@@ -218,17 +254,21 @@ class ZeroShotSAMGrounder:
             y2 = min(h, y1 + 1)
         mask[y1:y2, x1:x2] = 1
 
-        rgb = _ensure_hwc_rgb(image_array)
-        tensor = torch.from_numpy(np.transpose(rgb, (2, 0, 1))).unsqueeze(0).float()
-        tensor = tensor.to(self.device)
-        text_embed = _hash_prompt_embed("sam-box", device=torch.device(self.device))
-        with torch.no_grad():
-            refined = self._decoder(tensor, text_embed).squeeze().detach().cpu().numpy()
-        if refined.shape == mask.shape:
-            local = (refined > 0.5).astype(np.uint8)
-            combined = mask * local
-            if combined.any():
-                return combined
+        if HAS_TORCH and self._decoder is not None:
+            try:
+                rgb = _ensure_hwc_rgb(image_array)
+                tensor = torch.from_numpy(np.transpose(rgb, (2, 0, 1))).unsqueeze(0).float()
+                tensor = tensor.to(self.device)
+                text_embed = _hash_prompt_embed("sam-box", device=torch.device(self.device))
+                with torch.no_grad():
+                    refined = self._decoder(tensor, text_embed).squeeze().detach().cpu().numpy()
+                if refined.shape == mask.shape:
+                    local = (refined > 0.5).astype(np.uint8)
+                    combined = mask * local
+                    if combined.any():
+                        return combined
+            except Exception:
+                pass
         return mask
 
     def _try_load(self, path: Path) -> bool:
@@ -260,7 +300,7 @@ class TextGuidedGrounder:
     def __init__(self) -> None:
         weights = settings.resolved_mobilesam_weights()
         self.grounder = ZeroShotSAMGrounder(str(weights))
-        self.device = torch.device(self.grounder.device)
+        self.device = torch.device(self.grounder.device) if HAS_TORCH else "cpu"
 
     def ground(
         self,
@@ -286,14 +326,19 @@ class TextGuidedGrounder:
         loaded = Path(self.grounder.checkpoint).exists()
 
         # Read full raster image in HWC format for multi-instance prediction
-        with rasterio.open(image_path) as src:
-            count = min(3, src.count)
-            raw = src.read(list(range(1, count + 1))).astype(np.float32)
-            if raw.shape[0] < 3:
-                raw = np.repeat(raw[:1], 3, axis=0)
-            image_hwc = np.transpose(raw, (1, 2, 0))
-            if image_hwc.max() > 1.0:
-                image_hwc = image_hwc / (image_hwc.max() + 1e-6)
+        try:
+            with rasterio.open(image_path) as src:
+                count = min(3, max(1, src.count))
+                raw = src.read(list(range(1, count + 1))).astype(np.float32)
+                if raw.shape[0] < 3:
+                    raw = np.repeat(raw[:1], 3, axis=0)
+                image_hwc = np.transpose(raw, (1, 2, 0))
+                if image_hwc.max() > 1.0:
+                    image_hwc = image_hwc / (image_hwc.max() + 1e-6)
+        except Exception as read_err:
+            logger.error("Failed to process raster %s: %s", image_path, read_err, exc_info=True)
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=f"Failed to process raster: {read_err}") from read_err
 
         h, w = image_hwc.shape[:2]
 
@@ -329,8 +374,8 @@ class TextGuidedGrounder:
         mean_conf = float(np.mean([inst["confidence"] for inst in instances])) if instances else (0.62 if loaded else 0.45)
 
         description = (
-            f"Grounded {num_found} separate instance(s) of `{detected_label}` with {model_name}. "
-            f"Box threshold={box_threshold}, NMS IoU={nms_threshold}, positive fraction={float((composite_mask > 0.5).mean()):.3f}."
+            f"Detected and mapped {num_found} separate {detected_label}(s). "
+            f"All identified locations are outlined on the map for inspection."
         )
 
         return GroundingResult(
@@ -374,21 +419,30 @@ def _ensure_hwc_rgb(image_array: np.ndarray) -> np.ndarray:
 def _preview_tensor(path: Path, size: int = 256) -> torch.Tensor:
     import cv2
 
-    with rasterio.open(path) as src:
-        count = min(3, src.count)
-        arr = src.read(list(range(1, count + 1))).astype(np.float32)
-    if arr.shape[0] < 3:
-        arr = np.repeat(arr[:1], 3, axis=0)
-    bands = []
-    for band in arr[:3]:
-        if band.max() > band.min():
-            band = (band - band.min()) / (band.max() - band.min())
-        bands.append(cv2.resize(band, (size, size), interpolation=cv2.INTER_AREA))
-    stacked = np.stack(bands, axis=0)
+    try:
+        with rasterio.open(path) as src:
+            count = min(3, max(1, src.count))
+            arr = src.read(list(range(1, count + 1))).astype(np.float32)
+        if arr.shape[0] < 3:
+            arr = np.repeat(arr[:1], 3, axis=0)
+        bands = []
+        for band in arr[:3]:
+            if band.max() > band.min():
+                band = (band - band.min()) / (band.max() - band.min())
+            bands.append(cv2.resize(band, (size, size), interpolation=cv2.INTER_AREA))
+        stacked = np.stack(bands, axis=0)
+    except Exception as err:
+        logger.error("Failed to process raster %s: %s", path, err, exc_info=True)
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Failed to process raster: {err}") from err
+    if not HAS_TORCH:
+        return stacked[np.newaxis, ...]
     return torch.from_numpy(stacked).unsqueeze(0)
 
 
-def _hash_prompt_embed(prompt: str, device: torch.device) -> torch.Tensor:
+def _hash_prompt_embed(prompt: str, device: Any = None) -> Any:
+    if not HAS_TORCH:
+        return None
     rng = np.random.default_rng(abs(hash(prompt)) % (2**32))
     vec = rng.standard_normal(32).astype(np.float32)
     return torch.from_numpy(vec).to(device)

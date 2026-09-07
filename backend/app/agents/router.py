@@ -21,14 +21,16 @@ TASK_SINGLE_GROUNDING = "single_grounding"
 TASK_SINGLE_VQA = "single_vqa"
 TASK_BITEMPORAL_CHANGE = "bitemporal_change"
 TASK_CROSS_MODAL = "cross_modal"
+TASK_DOMAIN_KNOWLEDGE_QA = "domain_knowledge_qa"
 
 # Controller internal task identifiers
 INTERNAL_SINGLE_GROUNDING = "single_image_grounding"
 INTERNAL_SINGLE_VQA = "single_image_vqa"
 INTERNAL_BITEMPORAL_CHANGE = "bi_temporal_change_analysis"
 INTERNAL_CROSS_MODAL = "cross_modal_joint_analysis"
+INTERNAL_DOMAIN_KNOWLEDGE_QA = "domain_knowledge_qa"
 
-# Standard mapping: maps all variants to the mandated 4 task types
+# Standard mapping: maps all variants to the mandated task types
 STANDARDIZED_TASK_MAP: Dict[str, str] = {
     INTERNAL_SINGLE_GROUNDING: TASK_SINGLE_GROUNDING,
     TASK_SINGLE_GROUNDING: TASK_SINGLE_GROUNDING,
@@ -43,6 +45,11 @@ STANDARDIZED_TASK_MAP: Dict[str, str] = {
     INTERNAL_CROSS_MODAL: TASK_CROSS_MODAL,
     TASK_CROSS_MODAL: TASK_CROSS_MODAL,
     "fusion": TASK_CROSS_MODAL,
+    INTERNAL_DOMAIN_KNOWLEDGE_QA: TASK_DOMAIN_KNOWLEDGE_QA,
+    TASK_DOMAIN_KNOWLEDGE_QA: TASK_DOMAIN_KNOWLEDGE_QA,
+    "domain_knowledge_qa": TASK_DOMAIN_KNOWLEDGE_QA,
+    "domain_qa": TASK_DOMAIN_KNOWLEDGE_QA,
+    "text_only": TASK_DOMAIN_KNOWLEDGE_QA,
 }
 
 INTERNAL_TASK_MAP: Dict[str, str] = {
@@ -50,6 +57,7 @@ INTERNAL_TASK_MAP: Dict[str, str] = {
     TASK_SINGLE_VQA: INTERNAL_SINGLE_VQA,
     TASK_BITEMPORAL_CHANGE: INTERNAL_BITEMPORAL_CHANGE,
     TASK_CROSS_MODAL: INTERNAL_CROSS_MODAL,
+    TASK_DOMAIN_KNOWLEDGE_QA: INTERNAL_DOMAIN_KNOWLEDGE_QA,
 }
 
 # Temporal phrases and keywords denoting bi-temporal intent
@@ -146,6 +154,25 @@ GROUNDING_TRIGGERS = [
     "facility",
 ]
 
+# Triggers denoting land cover and domain classification (BigEarthNet domain adapter)
+LANDCOVER_TRIGGERS = [
+    "land cover",
+    "landcover",
+    "land-cover",
+    "land use",
+    "terrain",
+    "corine",
+    "bigearthnet",
+    "vegetation",
+    "crop",
+    "forest",
+    "urban fabric",
+    "dominant class",
+    "surface classification",
+    "scene semantics",
+    "scene classification",
+]
+
 
 class InputInspectorNode:
     """LangGraph node and deterministic router inspecting input images and analyst intent.
@@ -168,8 +195,8 @@ class InputInspectorNode:
         force_task: Optional[str] = None,
     ) -> str:
         """Inspects inputs and returns the internal controller task name."""
-        files = list(filepaths or [])
-        num_images = len(files)
+        files = list(filepaths) if filepaths is not None else None
+        num_images = len(files) if files is not None else 0
         q = query.lower().strip()
 
         # Handle forced override if provided
@@ -179,9 +206,6 @@ class InputInspectorNode:
                 target_internal = INTERNAL_TASK_MAP[normalized]
                 logger.info("InputInspector: force_task applied -> %s (%s)", normalized, target_internal)
                 return target_internal
-
-        if num_images == 0:
-            raise ValueError("At least one satellite image (GeoTIFF) is required for analysis.")
 
         # Temporal intent evaluation
         has_temporal_phrase = any(phrase in q for phrase in TEMPORAL_PHRASES)
@@ -196,7 +220,33 @@ class InputInspectorNode:
             or "cross modal" in q
             or (has_optical_keyword and has_sar_keyword)
             or ("optical" in q and "radar" in q)
+            or "both sensors" in q
+            or "combine optical and sar" in q
+            or "fusion" in q
         )
+
+        if files is not None and len(files) == 0:
+            if has_temporal:
+                logger.error("InputInspector REJECTION: 0 images provided but query implies bi-temporal change ('%s')", query)
+                raise ValueError(
+                    "Bi-temporal change detection requires two spatially aligned images (Before and After). Please attach an image pair to analyze temporal change."
+                )
+            if has_cross_modal_keyword or (has_optical_keyword and has_sar_keyword):
+                logger.error("InputInspector REJECTION: 0 images provided but query implies cross-modal fusion ('%s')", query)
+                raise ValueError(
+                    "Cross-modal Optical+SAR joint analysis requires both Optical and SAR imagery, but 0 images were provided. Please upload both modalities to execute joint analysis."
+                )
+            logger.info("InputInspector: 0 images provided in workflow -> classifying as %s", INTERNAL_DOMAIN_KNOWLEDGE_QA)
+            return INTERNAL_DOMAIN_KNOWLEDGE_QA
+
+        if files is None:
+            if has_cross_modal_keyword or (has_optical_keyword and has_sar_keyword):
+                return INTERNAL_CROSS_MODAL
+            if has_temporal:
+                return INTERNAL_BITEMPORAL_CHANGE
+            if any(gt in q for gt in GROUNDING_TRIGGERS):
+                return INTERNAL_SINGLE_GROUNDING
+            return INTERNAL_SINGLE_VQA
 
         # Metadata modality check
         meta_list = list(parsed_meta or [])
@@ -217,8 +267,7 @@ class InputInspectorNode:
                     query,
                 )
                 raise ValueError(
-                    "Bi-temporal change analysis requires at least two images (baseline epoch T1 and target epoch T2), "
-                    "but only 1 image was provided. Please upload both epochs to proceed with change detection."
+                    "Bi-temporal change detection requires two spatially aligned images (Before and After). Please attach an image pair to analyze temporal change."
                 )
 
             if has_cross_modal_keyword or (has_optical_keyword and has_sar_keyword):
@@ -230,6 +279,11 @@ class InputInspectorNode:
                     "Cross-modal Optical+SAR joint analysis requires both Optical and SAR imagery, "
                     "but only 1 image was provided. Please upload both modalities to execute joint analysis."
                 )
+
+            # Route land cover and terrain classification to single_vqa (BigEarthNet domain adapter)
+            if any(lt in q for lt in LANDCOVER_TRIGGERS):
+                logger.info("InputInspector: 1 image + land-cover intent -> %s (BigEarthNet adapter)", INTERNAL_SINGLE_VQA)
+                return INTERNAL_SINGLE_VQA
 
             # Route to Grounding or VQA
             if any(gt in q for gt in GROUNDING_TRIGGERS):
@@ -243,7 +297,7 @@ class InputInspectorNode:
         # 2+ IMAGES CONSTRAINTS
         # ==========================================
         # Check cross-modal priority
-        if is_cross_modal_inputs or (has_cross_modal_keyword and not has_temporal_phrase):
+        if is_cross_modal_inputs or has_cross_modal_keyword:
             logger.info("InputInspector: 2 images with Optical+SAR modalities/intent -> %s", INTERNAL_CROSS_MODAL)
             return INTERNAL_CROSS_MODAL
 

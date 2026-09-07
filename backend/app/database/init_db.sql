@@ -40,9 +40,9 @@ CREATE TABLE IF NOT EXISTS trace_model_executions (
 CREATE INDEX IF NOT EXISTS idx_traces_spatial ON auditable_execution_traces USING GIST (bounding_box_geometry);
 CREATE INDEX IF NOT EXISTS idx_executions_trace ON trace_model_executions (trace_id);
 
--- Seed the offline weight registry so trace FKs resolve on a fresh cluster.
 INSERT INTO model_registry (model_name, model_version, model_type, is_active, local_weights_path)
 VALUES
+    ('llava', '0.1.0', 'vlm', TRUE, '/app/models/vllm'),
     ('llava-3b', '0.1.0', 'vlm', TRUE, '/app/models/vllm'),
     ('sam-vit-b', '1.0.0', 'segmenter', TRUE, '/app/models/sam/sam_vit_b.pth'),
     ('mobilesam', '1.0.0', 'segmenter', TRUE, '/app/models/sam/mobile_sam.pt'),
@@ -57,3 +57,21 @@ VALUES
     ('Opt-SAR-Fusion-Net', '1.0.0', 'fusion', TRUE, '/local_models/fusion/cross_attention.pt'),
     ('cross_modal_analysis_tool', '1.0.0', 'fusion', TRUE, '/local_models/fusion/cross_attention.pt')
 ON CONFLICT (model_name) DO NOTHING;
+
+-- 4. Dedicated Persistent Query History (ChatGPT-Style Multi-Session Logs)
+CREATE TABLE IF NOT EXISTS query_history (
+    id VARCHAR(64) PRIMARY KEY,
+    trace_id VARCHAR(64) REFERENCES auditable_execution_traces(trace_id) ON DELETE SET NULL,
+    user_query TEXT NOT NULL,
+    task_type VARCHAR(64) NOT NULL,
+    features_count INT DEFAULT 0,
+    confidence DOUBLE PRECISION NOT NULL,
+    headline TEXT,
+    location TEXT,
+    analysis_data JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_query_history_created ON query_history (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_query_history_task ON query_history (task_type);
+

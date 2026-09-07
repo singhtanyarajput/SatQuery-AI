@@ -43,12 +43,17 @@ class CrossModalAnalysisTool:
         optical_path: Path,
     ) -> Tuple[List[Dict[str, Any]], Affine, str, Tuple[int, int]]:
         """Extracts built-up infrastructure and structural boundaries from optical bands."""
-        with rasterio.open(optical_path) as src:
-            affine = src.transform
-            crs = src.crs.to_string() if src.crs else "EPSG:4326"
-            count = min(3, src.count)
-            arr = src.read(list(range(1, count + 1)))
-            h, w = src.height, src.width
+        try:
+            with rasterio.open(optical_path) as src:
+                affine = src.transform
+                crs = src.crs.to_string() if src.crs else "EPSG:4326"
+                count = min(3, max(1, src.count))
+                arr = src.read(list(range(1, count + 1)))
+                h, w = src.height, src.width
+        except Exception as err:
+            logger.error("Failed to process raster %s: %s", optical_path, err, exc_info=True)
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=f"Failed to process raster: {err}") from err
 
         # Convert to 8-bit grayscale for edge/structure extraction
         if count == 1:
@@ -84,9 +89,15 @@ class CrossModalAnalysisTool:
             area = cv2.contourArea(cnt)
             if min_area <= area <= max_area:
                 builtup_idx += 1
-                x, y, bw, bh = cv2.boundingRect(cnt)
-                corners_px = [(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh), (x, y)]
-                geo_coords = [list(affine * (px, py)) for px, py in corners_px]
+                approx = cv2.approxPolyDP(cnt, epsilon=1.5, closed=True)
+                if len(approx) >= 3:
+                    pts_px = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
+                    pts_px.append(pts_px[0])
+                    geo_coords = [list(affine * (px, py)) for px, py in pts_px]
+                else:
+                    x, y, bw, bh = cv2.boundingRect(cnt)
+                    corners_px = [(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh), (x, y)]
+                    geo_coords = [list(affine * (px, py)) for px, py in corners_px]
 
                 poly = Polygon(geo_coords)
                 if not poly.is_valid:
@@ -146,11 +157,16 @@ class CrossModalAnalysisTool:
         Physics rationale: Smooth water bodies cause specular radar reflection away from
         the sensor antenna, resulting in very low backscatter (typically sigma-0 < -18 dB).
         """
-        with rasterio.open(sar_path) as src:
-            affine = src.transform
-            crs = src.crs.to_string() if src.crs else "EPSG:4326"
-            h, w = src.height, src.width
-            arr = src.read(1).astype(np.float32)
+        try:
+            with rasterio.open(sar_path) as src:
+                affine = src.transform
+                crs = src.crs.to_string() if src.crs else "EPSG:4326"
+                h, w = src.height, src.width
+                arr = src.read(1).astype(np.float32)
+        except Exception as err:
+            logger.error("Failed to process raster %s: %s", sar_path, err, exc_info=True)
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=f"Failed to process raster: {err}") from err
 
         # Convert amplitude / intensity to calibrated sigma-0 in dB
         # For normalized amplitude A in [0, 1]: sigma0_db = 10 * log10(A^2 + eps)
@@ -182,9 +198,15 @@ class CrossModalAnalysisTool:
             area = cv2.contourArea(cnt)
             if area >= min_water_area:
                 water_idx += 1
-                x, y, bw, bh = cv2.boundingRect(cnt)
-                corners_px = [(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh), (x, y)]
-                geo_coords = [list(affine * (px, py)) for px, py in corners_px]
+                approx = cv2.approxPolyDP(cnt, epsilon=1.5, closed=True)
+                if len(approx) >= 3:
+                    pts_px = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
+                    pts_px.append(pts_px[0])
+                    geo_coords = [list(affine * (px, py)) for px, py in pts_px]
+                else:
+                    x, y, bw, bh = cv2.boundingRect(cnt)
+                    corners_px = [(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh), (x, y)]
+                    geo_coords = [list(affine * (px, py)) for px, py in corners_px]
 
                 poly = Polygon(geo_coords)
                 if not poly.is_valid:
@@ -264,12 +286,11 @@ class CrossModalAnalysisTool:
         num_water = len(water_features)
 
         answer = (
-            f"Specialist workflow: Optical-SAR Joint Information Extraction complete. "
-            f"Optical imagery (Cartosat-2S) resolved {num_builtup} built-up and infrastructural polygon(s). "
-            f"Co-registered SAR C-band radar (Sentinel-1/RISAT) successfully penetrated cloud cover, "
-            f"delineating {num_water} open water surface and inundation parcel(s) via calibrated specular "
-            f"backscatter thresholding (sigma-0 < {self.sar_water_threshold_db} dB). "
-            f"Joint multi-modal analysis successfully combined spectral and structural feature layers."
+            f"Joint optical and radar satellite analysis completed for query: \"{query}\". "
+            f"Optical satellite imagery mapped {num_builtup} building and road infrastructure area(s). "
+            f"Weather-penetrating radar successfully pierced cloud cover to detect {num_water} "
+            f"open water surface and flooded area(s). "
+            f"Both layers have been color-coded and highlighted on the map for inspection."
         )
 
         confidence = 0.94

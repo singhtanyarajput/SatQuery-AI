@@ -29,10 +29,23 @@ from app.agents.router import InputInspectorNode  # noqa: E402
 
 
 def write_dummy_geotiff(path: Path, west: float, south: float, east: float, north: float, bands: int = 4) -> None:
+    import cv2
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    width, height = 64, 64
+    width, height = 256, 256
     transform = from_bounds(west, south, east, north, width, height)
-    data = np.random.default_rng(42).random((bands, height, width), dtype=np.float32)
+    rng = np.random.default_rng(42)
+    data = rng.random((bands, height, width), dtype=np.float32) * 0.3 + 0.2
+
+    # Draw genuine physical features so computer vision algorithms detect real targets
+    circle_img = np.zeros((height, width), dtype=np.uint8)
+    cv2.circle(circle_img, (160, 180), 8, 255, -1)
+    cv2.circle(circle_img, (190, 195), 8, 255, -1)
+    cv2.circle(circle_img, (215, 185), 8, 255, -1)
+    circle_mask = circle_img > 0
+    for b in range(bands):
+        data[b][circle_mask] = 0.95
+
     with rasterio.open(
         path,
         "w",
