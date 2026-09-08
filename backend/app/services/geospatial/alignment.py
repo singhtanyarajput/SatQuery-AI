@@ -160,6 +160,60 @@ class SpatialAligner:
         inliers = int(getattr(align_subpixel_images, "last_inliers", 0))
         return homography, inliers
 
+    def align(
+        self,
+        reference: Path | str | np.ndarray,
+        moving: Path | str | np.ndarray,
+    ) -> AlignmentResult:
+        """Co-registers moving scene onto reference scene via SIFT keypoint matching & RANSAC homography warping.
+
+        Accepts GeoTIFF filepaths (Path or str) or raw image numpy arrays.
+        """
+        if isinstance(reference, (str, Path)) and isinstance(moving, (str, Path)):
+            return self.align_pair(Path(reference), Path(moving))
+
+        # Direct NumPy array sub-pixel alignment
+        ref_arr = np.asarray(reference)
+        mov_arr = np.asarray(moving)
+        ref_gray = _to_uint8_gray(ref_arr)
+        mov_gray = _to_uint8_gray(mov_arr)
+        homography, inliers = self.sift_ransac(ref_gray, mov_gray)
+        h, w = ref_gray.shape[:2]
+        if homography is not None:
+            warped = cv2.warpPerspective(mov_gray, homography, (w, h))
+        else:
+            warped = cv2.resize(mov_gray, (w, h))
+
+        work = settings.ARTIFACT_DIR / "alignment" / "arrays"
+        work.mkdir(parents=True, exist_ok=True)
+        warped_path = work / "array_warped.tif"
+        try:
+            from rasterio.transform import from_bounds
+
+            with rasterio.open(
+                warped_path,
+                "w",
+                driver="GTiff",
+                height=h,
+                width=w,
+                count=1,
+                dtype="uint8",
+                crs="EPSG:4326",
+                transform=from_bounds(0.0, 0.0, float(w), float(h), w, h),
+            ) as dst:
+                dst.write(warped, 1)
+        except Exception:
+            pass
+
+        coeffs = homography.flatten().tolist() if homography is not None else None
+        return AlignmentResult(
+            reference_path=Path("ref_array.tif"),
+            moving_path=warped_path,
+            crs="EPSG:4326",
+            inliers=inliers,
+            homography=coeffs,
+        )
+
     def align_pair(self, reference: Path, moving: Path) -> AlignmentResult:
         work = settings.ARTIFACT_DIR / "alignment" / reference.stem
         work.mkdir(parents=True, exist_ok=True)

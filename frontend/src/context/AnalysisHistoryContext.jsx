@@ -96,6 +96,58 @@ export function AnalysisHistoryProvider({ children }) {
 
   const [activeSessionId, setActiveSessionId] = useState(null);
 
+  // Synchronize with backend PostGIS /api/v1/history on mount
+  useEffect(() => {
+    let mounted = true;
+    const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+    const endpoint = API_BASE ? `${API_BASE}/api/v1/history` : "/api/v1/history";
+
+    const fetchHistory = async () => {
+      try {
+        let res = await fetch(endpoint).catch(() => null);
+        if (!res || !res.ok) {
+          // Fallback to absolute localhost:8000
+          res = await fetch("http://localhost:8000/api/v1/history").catch(() => null);
+        }
+        if (!res || !res.ok) return;
+
+        const data = await res.json();
+        if (!mounted || !data) return;
+
+        const rawList = Array.isArray(data.sessions)
+          ? data.sessions
+          : Array.isArray(data)
+          ? data
+          : [];
+        const remoteSessions = rawList.map(sanitizeSession).filter(Boolean);
+
+        if (remoteSessions.length > 0) {
+          setSessions((prev) => {
+            const map = new Map();
+            // Start with remote sessions from DB
+            remoteSessions.forEach((s) => map.set(s.id, s));
+            // Layer local sessions that might be newer or offline
+            prev.forEach((s) => {
+              if (!map.has(s.id)) {
+                map.set(s.id, s);
+              }
+            });
+            return Array.from(map.values()).sort(
+              (a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
+            );
+          });
+        }
+      } catch (err) {
+        console.warn("Could not sync with backend history:", err);
+      }
+    };
+
+    fetchHistory();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // Sync to localStorage on sessions update with strict plain JSON primitive sanitization
   useEffect(() => {
     try {
@@ -143,6 +195,16 @@ export function AnalysisHistoryProvider({ children }) {
     setSessions((prev) => prev.filter((s) => s.id !== sessionId));
     if (activeSessionId === sessionId) {
       setActiveSessionId(null);
+    }
+    // Delete from backend in background
+    try {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+      const endpoint = API_BASE ? `${API_BASE}/api/v1/history/${sessionId}` : `/api/v1/history/${sessionId}`;
+      fetch(endpoint, { method: "DELETE" }).catch(() => {
+        fetch(`http://localhost:8000/api/v1/history/${sessionId}`, { method: "DELETE" }).catch(() => {});
+      });
+    } catch (e) {
+      // ignore
     }
   };
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("torch")
+pytest.importorskip("peft")
 import torch
 
 from train_lora import (

@@ -76,8 +76,10 @@ export default function QueryComposer({
 
       recognition.onstart = () => setIsListening(true);
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        onQueryChange(query ? `${query} ${transcript}` : transcript);
+        const transcript = event?.results?.[0]?.[0]?.transcript || "";
+        if (transcript) {
+          onQueryChange(query ? `${query} ${transcript}` : transcript);
+        }
         setIsListening(false);
       };
       recognition.onerror = () => setIsListening(false);

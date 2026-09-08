@@ -87,3 +87,23 @@ def test_langgraph_tracks_file_states(tmp_path: Path) -> None:
     assert result["task"] == "single_image_vqa"
     assert result["file_states"][str(t1)] == "persisted"
     assert result["trace"]["task"] == "single_image_vqa"
+
+
+def test_text_only_domain_knowledge_qa() -> None:
+    controller = SatQueryController(db_session=None)
+    # Test classifier on empty filepaths list
+    assert controller.classify_query("What is the revisit period of Sentinel-1?", filepaths=[]) == "domain_knowledge_qa"
+
+    # Test workflow execution with 0 images
+    trace = controller.execute_workflow(
+        query="What is the revisit period of Sentinel-1?",
+        filepaths=[],
+    )
+    assert trace.task == "domain_knowledge_qa"
+    assert trace.task_type == "domain_knowledge_qa"
+    assert trace.input_metadata.modalities == ["Text-Only"]
+    assert trace.input_metadata.bounds == []
+    assert trace.geojson is None
+    assert "sentinel-1" in trace.output.lower()
+    assert trace.models_executed == ["LocalVisionLanguageClient"]
+

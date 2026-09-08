@@ -91,3 +91,25 @@ class TraceModelExecution(Base):
         "ModelRegistry",
         back_populates="executions",
     )
+
+
+class QueryHistory(Base):
+    __tablename__ = "query_history"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    trace_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("auditable_execution_traces.trace_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    user_query: Mapped[str] = mapped_column(Text, nullable=False)
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    features_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    headline: Mapped[str | None] = mapped_column(Text, nullable=True)
+    location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analysis_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=True, default=datetime.utcnow
+    )
+
