@@ -422,14 +422,24 @@ class SatQueryController:
         self.last_bbox = [float(v) for v in b[:4]]
         models_executed = [step.model for step in execution_pipeline if step.model]
         std_task = STANDARDIZED_TASK_MAP.get(task, task)
-        base_modalities = list(primary_meta.get("modalities") or ["RGB"])
-        if "Vision" not in base_modalities and "Image-Text" not in base_modalities:
-            lead_modality = ["Image-Text"] if std_task in ["single_vqa", "single_image_vqa"] else ["Vision"]
-            resolved_modalities = lead_modality + [m for m in base_modalities if m not in ("Text-Only", "Vision", "Image-Text")]
+        if std_task in ["bitemporal_change", "bi_temporal_change_analysis"]:
+            lead_modality = ["Bi-temporal"]
+        elif std_task in ["cross_modal", "cross_modal_joint_analysis"]:
+            lead_modality = ["Cross-Modal"]
+        elif std_task in ["single_vqa", "single_image_vqa"]:
+            lead_modality = ["Image-Text"]
         else:
-            resolved_modalities = [m for m in base_modalities if m != "Text-Only"]
-        if not resolved_modalities:
-            resolved_modalities = ["Vision"]
+            lead_modality = ["Vision"]
+
+        all_base_modalities = []
+        for meta in parsed_meta:
+            for m in (meta.get("modalities") or ["RGB"]):
+                if m not in all_base_modalities and m not in ("Text-Only", "Vision", "Image-Text", "Bi-temporal", "Cross-Modal"):
+                    all_base_modalities.append(m)
+        if not all_base_modalities:
+            all_base_modalities = ["RGB"]
+
+        resolved_modalities = lead_modality + all_base_modalities
 
         trace_log = AuditableTraceLogSchema(
             trace_id=trace_id,
@@ -635,6 +645,30 @@ class SatQueryController:
                 )
 
                 final_answer = cm_result.answer
+                try:
+                    from app.services.models.base import LocalVisionLanguageClient
+
+                    vlm_res = LocalVisionLanguageClient().generate(
+                        prompt=(
+                            f"Cross-modal EO satellite joint analysis. User question: '{query}'. "
+                            f"Image 1 represents Optical (Cartosat-2S) RGB imagery. "
+                            f"Image 2 represents SAR C-Band radar (Sentinel-1 / RISAT) backscatter. "
+                            f"Extracted optical built-up features: {cm_result.params.get('builtup_features_count', 0)}. "
+                            f"Extracted radar water/inundation surfaces: {cm_result.params.get('water_features_count', 0)}. "
+                            f"Synthesize the complementary findings between optical structure and radar backscatter."
+                        ),
+                        images=[optical, t2],
+                        extra_context={
+                            "task": task,
+                            "task_type": "cross_modal",
+                            "land_cover_classes": ben_classes,
+                        },
+                    )
+                    if vlm_res.text and not vlm_res.text.startswith("[offline stub]"):
+                        final_answer = vlm_res.text
+                except Exception as vlm_err:
+                    logger.warning("cross_modal_vlm_failed: %s", vlm_err)
+
                 if not final_answer or final_answer.startswith("[offline stub]"):
                     final_answer = generate_heuristic_summary(
                         query=query,
@@ -957,14 +991,24 @@ def compile_satquery_graph(controller: SatQueryController):
             h = int(primary_meta.get("height") or 512)
             calculated_bounds = [float(v) for v in (primary_meta.get("bounds") or _compute_proportional_bounds(w, h))]
             controller.last_bbox = calculated_bounds
-            base_modalities = list(primary_meta.get("modalities") or ["RGB"])
-            if "Vision" not in base_modalities and "Image-Text" not in base_modalities:
-                lead_modality = ["Image-Text"] if std_task in ["single_vqa", "single_image_vqa"] else ["Vision"]
-                modalities = lead_modality + [m for m in base_modalities if m not in ("Text-Only", "Vision", "Image-Text")]
+            if std_task in ["bitemporal_change", "bi_temporal_change_analysis"]:
+                lead_modality = ["Bi-temporal"]
+            elif std_task in ["cross_modal", "cross_modal_joint_analysis"]:
+                lead_modality = ["Cross-Modal"]
+            elif std_task in ["single_vqa", "single_image_vqa"]:
+                lead_modality = ["Image-Text"]
             else:
-                modalities = [m for m in base_modalities if m != "Text-Only"]
-            if not modalities:
-                modalities = ["Vision"]
+                lead_modality = ["Vision"]
+
+            all_base_modalities = []
+            for meta in parsed_meta:
+                for m in (meta.get("modalities") or ["RGB"]):
+                    if m not in all_base_modalities and m not in ("Text-Only", "Vision", "Image-Text", "Bi-temporal", "Cross-Modal"):
+                        all_base_modalities.append(m)
+            if not all_base_modalities:
+                all_base_modalities = ["RGB"]
+
+            modalities = lead_modality + all_base_modalities
 
             input_meta = InputMetadataSchema(
                 crs=primary_meta.get("crs", "EPSG:4326"),

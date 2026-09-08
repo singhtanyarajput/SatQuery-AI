@@ -185,10 +185,22 @@ class OpticalSarFusion:
                 with rasterio.open(optical_path) as o_src, rasterio.open(sar_path) as s_src:
                     o_arr = _minmax(o_src.read(1).astype(np.float32))
                     s_arr = _minmax(s_src.read(1).astype(np.float32))
-            except Exception as read_err:
-                logger.warning("Failed to read rasters in fuse fallback: %s", read_err)
-                o_arr = np.zeros((256, 256), dtype=np.float32)
-                s_arr = np.zeros((256, 256), dtype=np.float32)
+            except Exception:
+                try:
+                    from PIL import Image
+                    with Image.open(optical_path) as p1, Image.open(sar_path) as p2:
+                        o_arr = _minmax(np.array(p1.convert("L"), dtype=np.float32))
+                        s_arr = _minmax(np.array(p2.convert("L"), dtype=np.float32))
+                except Exception as read_err:
+                    logger.warning("Failed to read rasters in fuse fallback: %s", read_err)
+                    o_arr = np.zeros((256, 256), dtype=np.float32)
+                    s_arr = np.zeros((256, 256), dtype=np.float32)
+
+            # Dimension alignment: if optical and SAR arrays differ in shape, resize SAR to optical
+            if o_arr.shape != s_arr.shape:
+                import cv2
+                s_arr = cv2.resize(s_arr, (o_arr.shape[1], o_arr.shape[0]), interpolation=cv2.INTER_LINEAR)
+
             mask = (o_arr * 0.5 + s_arr * 0.5)
         energy = float(mask.mean())
         return FusionResult(
@@ -218,9 +230,15 @@ def _read_rgb(path: Path, size: int = 256) -> Any:
             arr = src.read(list(range(1, count + 1)))
         if arr.shape[0] < 3:
             arr = np.repeat(arr[:1], 3, axis=0)
-    except Exception as err:
-        logger.warning("Failed to read RGB raster from %s: %s", path, err)
-        arr = np.zeros((3, size, size), dtype=np.float32)
+    except Exception:
+        try:
+            from PIL import Image
+            with Image.open(path) as pimg:
+                rgb = pimg.convert("RGB")
+                arr = np.array(rgb, dtype=np.float32).transpose(2, 0, 1)
+        except Exception as err:
+            logger.warning("Failed to read RGB raster from %s: %s", path, err)
+            arr = np.zeros((3, size, size), dtype=np.float32)
     arr = _resize(arr[:3], size)
     arr = _minmax(arr)
     if not HAS_TORCH:
@@ -238,9 +256,15 @@ def _read_vv_vh(path: Path, shape: tuple[int, int]) -> Any:
             else:
                 vv = src.read(1)
                 arr = np.stack([vv, vv], axis=0)
-    except Exception as err:
-        logger.warning("Failed to read SAR raster from %s: %s", path, err)
-        arr = np.zeros((2, shape[0], shape[1]), dtype=np.float32)
+    except Exception:
+        try:
+            from PIL import Image
+            with Image.open(path) as pimg:
+                gray = np.array(pimg.convert("L"), dtype=np.float32)
+                arr = np.stack([gray, gray], axis=0)
+        except Exception as err:
+            logger.warning("Failed to read SAR raster from %s: %s", path, err)
+            arr = np.zeros((2, shape[0], shape[1]), dtype=np.float32)
     arr = _minmax(arr.astype(np.float32))
     arr = _resize(arr, shape[0])
     if not HAS_TORCH:

@@ -492,13 +492,15 @@ def _b64(img_input: Any) -> str:
                         rgb = np.clip(rgb, 0, 255).astype(np.uint8)
 
                 img = Image.fromarray(rgb)
+                if max(img.width, img.height) > 512:
+                    img.thumbnail((512, 512), Image.Resampling.BILINEAR)
                 buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=90)
+                img.save(buf, format="JPEG", quality=85)
                 return base64.b64encode(buf.getvalue()).decode("ascii")
         except Exception as conv_err:
             logger.debug("geotiff_to_jpeg_conversion_fallback: %s", conv_err)
 
-    # 2. If it's a standard image (or bytes), normalize to RGB JPEG using PIL
+    # 2. If it's a standard image (or bytes), normalize to RGB JPEG and standard 512x512 resolution using PIL
     try:
         import io
         from PIL import Image
@@ -506,8 +508,10 @@ def _b64(img_input: Any) -> str:
         stream = io.BytesIO(raw_bytes) if raw_bytes else path_obj
         with Image.open(stream) as img:
             rgb_img = img.convert("RGB")
+            if max(rgb_img.width, rgb_img.height) > 512:
+                rgb_img.thumbnail((512, 512), Image.Resampling.BILINEAR)
             buf = io.BytesIO()
-            rgb_img.save(buf, format="JPEG", quality=90)
+            rgb_img.save(buf, format="JPEG", quality=85)
             return base64.b64encode(buf.getvalue()).decode("ascii")
     except Exception as pil_err:
         logger.debug("pil_jpeg_encoding_fallback: %s", pil_err)

@@ -347,6 +347,8 @@ async def query_pipeline(
     images: List[UploadFile] = File(default=[]),
     file: UploadFile | None = File(default=None),
     image: UploadFile | None = File(default=None),
+    image1: UploadFile | None = File(default=None),
+    image2: UploadFile | None = File(default=None),
     optical: UploadFile | None = File(default=None),
     optical_t2: UploadFile | None = File(default=None),
     sar: UploadFile | None = File(default=None),
@@ -371,7 +373,7 @@ async def query_pipeline(
         combined_primary = _normalize_upload_list(files) + _normalize_upload_list(images)
         uploads = _collect_uploads(
             combined_primary,
-            [file, image, optical, optical_t2, sar, image_before, image_after, image_t1, image_t2],
+            [file, image, image1, image2, optical, optical_t2, sar, image_before, image_after, image_t1, image_t2],
         )
 
         # Resilient fallback: inspect raw request form if parameters were passed under alternate keys
@@ -388,9 +390,7 @@ async def query_pipeline(
             except Exception as form_err:
                 logger.debug("request_form_inspection_failed: %s", form_err)
 
-        if not files or len(files) == 0:
-            logger.info("Empty or zero files list provided for query: '%s'", query[:100])
-        if not uploads or len(uploads) == 0:
+        if not uploads:
             logger.info("Received text-only domain knowledge query: '%s'", query[:100])
         else:
             logger.info("Received %d uploaded image(s) for query: '%s'", len(uploads), query[:100])

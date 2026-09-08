@@ -182,10 +182,15 @@ class TemporalChangeVQA:
         try:
             with rasterio.open(t1_path) as src:
                 orig_h, orig_w = src.height, src.width
-        except Exception as err:
-            logger.error("Failed to process raster %s: %s", t1_path, err, exc_info=True)
-            from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail=f"Failed to process raster: {err}") from err
+        except Exception:
+            try:
+                from PIL import Image
+                with Image.open(t1_path) as pimg:
+                    orig_w, orig_h = pimg.size
+            except Exception as err:
+                logger.error("Failed to process raster %s: %s", t1_path, err, exc_info=True)
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail=f"Failed to process raster: {err}") from err
 
         if HAS_TORCH and self.encoder is not None:
             t1 = _preview_tensor(t1_path, size=512).to(self.device)
@@ -205,15 +210,28 @@ class TemporalChangeVQA:
                     b1 = min(max(1, s1.count), max(1, s2.count))
                     a1 = s1.read(list(range(1, b1 + 1))).astype(np.float32)
                     a2 = s2.read(list(range(1, b1 + 1))).astype(np.float32)
-            except Exception as read_err:
-                logger.error("Failed to process raster %s or %s: %s", t1_path, t2_path, read_err, exc_info=True)
-                from fastapi import HTTPException
-                raise HTTPException(status_code=400, detail=f"Failed to process raster: {read_err}") from read_err
+            except Exception:
+                try:
+                    from PIL import Image
+                    with Image.open(t1_path) as p1, Image.open(t2_path) as p2:
+                        a1 = np.array(p1.convert("RGB"), dtype=np.float32).transpose(2, 0, 1)
+                        a2 = np.array(p2.convert("RGB"), dtype=np.float32).transpose(2, 0, 1)
+                except Exception as read_err:
+                    logger.error("Failed to process raster %s or %s: %s", t1_path, t2_path, read_err, exc_info=True)
+                    from fastapi import HTTPException
+                    raise HTTPException(status_code=400, detail=f"Failed to process raster: {read_err}") from read_err
+
+            # Dimension alignment: if T1 and T2 have differing pixel dimensions, resize T2 to match T1
             if a1.shape[1:] != a2.shape[1:]:
                 resized_bands = []
                 for band in a2:
                     resized_bands.append(cv2.resize(band, (a1.shape[2], a1.shape[1]), interpolation=cv2.INTER_LINEAR))
                 a2 = np.stack(resized_bands, axis=0)
+            if a1.shape[0] != a2.shape[0]:
+                min_c = min(a1.shape[0], a2.shape[0])
+                a1 = a1[:min_c]
+                a2 = a2[:min_c]
+
             d = np.abs(a1 - a2).mean(axis=0)
             d_norm = (d - d.min()) / (d.max() - d.min() + 1e-6)
             mask = d_norm
@@ -235,11 +253,13 @@ class TemporalChangeVQA:
 
         vlm = self.vlm.generate(
             prompt=(
-                f"Bi-temporal EO change analysis. User question: {query}. "
-                f"Decoded change tokens: {token_text}. "
-                f"Estimated change fraction: {float((mask > 0.5).mean()):.3f}."
+                f"Bi-temporal EO satellite change analysis. User question: '{query}'. "
+                f"Image 1 (T1) represents baseline epoch. Image 2 (T2) represents post-event epoch. "
+                f"Decoded change indicators: {token_text}. "
+                f"Estimated change fraction: {float((mask > 0.5).mean()):.1%}. "
+                f"Compare Image 1 (T1) and Image 2 (T2), and detail the physical and structural changes observed."
             ),
-            image_path=t2_path,
+            images=[t1_path, t2_path],
             extra_context={
                 "task": "bi_temporal_change_analysis",
                 "task_type": "bitemporal_change",
@@ -287,9 +307,19 @@ def _logits_to_text(logits: Any, query: str) -> str:
 def _preview_tensor(path: Path, size: int = 512) -> Any:
     import cv2
 
-    with rasterio.open(path) as src:
-        count = min(3, src.count)
-        arr = src.read(list(range(1, count + 1))).astype(np.float32)
+    try:
+        with rasterio.open(path) as src:
+            count = min(3, src.count)
+            arr = src.read(list(range(1, count + 1))).astype(np.float32)
+    except Exception:
+        try:
+            from PIL import Image
+            with Image.open(path) as pimg:
+                rgb = pimg.convert("RGB")
+                arr = np.array(rgb, dtype=np.float32).transpose(2, 0, 1)
+        except Exception as err:
+            logger.warning("Failed to preview tensor from %s: %s", path, err)
+            arr = np.zeros((3, size, size), dtype=np.float32)
     if arr.shape[0] < 3:
         arr = np.repeat(arr[:1], 3, axis=0)
     bands = []

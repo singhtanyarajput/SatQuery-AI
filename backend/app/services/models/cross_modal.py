@@ -50,10 +50,21 @@ class CrossModalAnalysisTool:
                 count = min(3, max(1, src.count))
                 arr = src.read(list(range(1, count + 1)))
                 h, w = src.height, src.width
-        except Exception as err:
-            logger.error("Failed to process raster %s: %s", optical_path, err, exc_info=True)
-            from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail=f"Failed to process raster: {err}") from err
+        except Exception:
+            try:
+                from PIL import Image
+                from affine import Affine
+                with Image.open(optical_path) as pimg:
+                    rgb = pimg.convert("RGB")
+                    w, h = rgb.size
+                    arr = np.array(rgb, dtype=np.float32).transpose(2, 0, 1)
+                    count = 3
+                    crs = "EPSG:4326"
+                    affine = Affine.translation(0, 0) * Affine.scale(1.0, 1.0)
+            except Exception as err:
+                logger.error("Failed to process raster %s: %s", optical_path, err, exc_info=True)
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail=f"Failed to process raster: {err}") from err
 
         # Convert to 8-bit grayscale for edge/structure extraction
         if count == 1:
@@ -163,10 +174,19 @@ class CrossModalAnalysisTool:
                 crs = src.crs.to_string() if src.crs else "EPSG:4326"
                 h, w = src.height, src.width
                 arr = src.read(1).astype(np.float32)
-        except Exception as err:
-            logger.error("Failed to process raster %s: %s", sar_path, err, exc_info=True)
-            from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail=f"Failed to process raster: {err}") from err
+        except Exception:
+            try:
+                from PIL import Image
+                from affine import Affine
+                with Image.open(sar_path) as pimg:
+                    w, h = pimg.size
+                    arr = np.array(pimg.convert("L"), dtype=np.float32)
+                    crs = "EPSG:4326"
+                    affine = Affine.translation(0, 0) * Affine.scale(1.0, 1.0)
+            except Exception as err:
+                logger.error("Failed to process raster %s: %s", sar_path, err, exc_info=True)
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail=f"Failed to process raster: {err}") from err
 
         # Convert amplitude / intensity to calibrated sigma-0 in dB
         # For normalized amplitude A in [0, 1]: sigma0_db = 10 * log10(A^2 + eps)

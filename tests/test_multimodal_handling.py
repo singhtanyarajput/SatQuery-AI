@@ -228,3 +228,125 @@ def test_starlette_uploadfile_preserves_modalities(tmp_path: Path, monkeypatch):
     assert passed_image_path[0] is not None
 
 
+def test_bitemporal_dimension_mismatch_alignment(tmp_path: Path, monkeypatch):
+    """Verify that TemporalChangeVQA automatically aligns rasters of differing pixel dimensions."""
+    from app.services.models.change_vqa import TemporalChangeVQA
+    from PIL import Image
+
+    t1_path = tmp_path / "t1_32x32.png"
+    t2_path = tmp_path / "t2_64x64.png"
+
+    # Save images with differing dimensions
+    Image.new("RGB", (32, 32), color=(100, 100, 100)).save(t1_path)
+    Image.new("RGB", (64, 64), color=(200, 200, 200)).save(t2_path)
+
+    # Mock VLM generation
+    monkeypatch.setattr(
+        "app.services.models.base.LocalVisionLanguageClient.generate",
+        lambda self, prompt, **kwargs: VLMResult(
+            text="Significant urban expansion detected between baseline T1 and T2.",
+            confidence=0.92,
+            params={"backend": "ollama", "model": "llava"},
+        ),
+    )
+
+    analyzer = TemporalChangeVQA()
+    res = analyzer.analyze(t1_path=t1_path, t2_path=t2_path, query="What changed between baseline and current epoch?")
+
+    assert res.answer is not None
+    assert res.change_mask is not None
+    assert res.confidence > 0.0
+    # Change mask must be resized back to native T1 dimensions (32, 32)
+    assert res.change_mask.shape == (32, 32)
+
+
+def test_query_pipeline_bitemporal_modalities(tmp_path: Path, monkeypatch):
+    """Verify that a 2-image bi-temporal query resolves to Bi-temporal modality."""
+    import backend.api.routes as routes_mod
+    from PIL import Image
+
+    monkeypatch.setattr(routes_mod.settings, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(routes_mod.settings, "ARTIFACT_DIR", tmp_path / "artifacts")
+    (tmp_path / "uploads").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+
+    img1_buf = io.BytesIO()
+    img2_buf = io.BytesIO()
+    Image.new("RGB", (48, 48), color=(50, 50, 50)).save(img1_buf, format="PNG")
+    Image.new("RGB", (64, 64), color=(150, 150, 150)).save(img2_buf, format="PNG")
+    img1_buf.seek(0)
+    img2_buf.seek(0)
+
+    u1 = UploadFile(filename="t1.png", file=img1_buf)
+    u2 = UploadFile(filename="t2.png", file=img2_buf)
+
+    monkeypatch.setattr(
+        "app.services.models.base.LocalVisionLanguageClient.generate",
+        lambda self, prompt, **kwargs: VLMResult(
+            text="Surface changes observed between T1 and T2.",
+            confidence=0.90,
+            params={"backend": "ollama", "model": "llava"},
+        ),
+    )
+
+    async def _run():
+        return await routes_mod.query_pipeline(
+            query="Analyze change detection and land cover differences between baseline and post-flood",
+            image1=u1,
+            image2=u2,
+            db=None,
+        )
+
+    envelope = asyncio.run(_run())
+    resp = envelope.model_dump()
+    assert resp["status"] == "ok"
+    assert resp["task_type"] == "bitemporal_change"
+    meta = resp["trace"]["input_metadata"]
+    assert "Bi-temporal" in meta["modalities"]
+
+
+def test_query_pipeline_cross_modal_modalities(tmp_path: Path, monkeypatch):
+    """Verify that a 2-image cross-modal query resolves to Cross-Modal modality."""
+    import backend.api.routes as routes_mod
+    from PIL import Image
+
+    monkeypatch.setattr(routes_mod.settings, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(routes_mod.settings, "ARTIFACT_DIR", tmp_path / "artifacts")
+    (tmp_path / "uploads").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+
+    opt_buf = io.BytesIO()
+    sar_buf = io.BytesIO()
+    Image.new("RGB", (48, 48), color=(20, 120, 20)).save(opt_buf, format="PNG")
+    Image.new("L", (48, 48), color=80).save(sar_buf, format="PNG")
+    opt_buf.seek(0)
+    sar_buf.seek(0)
+
+    u_opt = UploadFile(filename="cartosat_optical.png", file=opt_buf)
+    u_sar = UploadFile(filename="sentinel1_sar.png", file=sar_buf)
+
+    monkeypatch.setattr(
+        "app.services.models.base.LocalVisionLanguageClient.generate",
+        lambda self, prompt, **kwargs: VLMResult(
+            text="Optical features show residential areas; SAR shows water backscatter.",
+            confidence=0.93,
+            params={"backend": "ollama", "model": "llava"},
+        ),
+    )
+
+    async def _run():
+        return await routes_mod.query_pipeline(
+            query="Perform joint cross-modal optical and SAR analysis to fuse built-up and radar backscatter",
+            files=[u_opt, u_sar],
+            db=None,
+        )
+
+    envelope = asyncio.run(_run())
+    resp = envelope.model_dump()
+    assert resp["status"] == "ok"
+    assert resp["task_type"] == "cross_modal"
+    meta = resp["trace"]["input_metadata"]
+    assert "Cross-Modal" in meta["modalities"]
+
+
+

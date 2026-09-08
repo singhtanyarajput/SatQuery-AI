@@ -35,27 +35,13 @@ services:
       - satquery_ollama_data:/root/.ollama
     networks:
       - satquery_network
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
     restart: unless-stopped
-
-  ollama-init:
-    image: ollama/ollama:latest
-    container_name: satquery_ollama_init
-    depends_on:
-      - ollama
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      "sleep 3;
-       until (cat <<EOF | nc -w 1 ollama 11434 >/dev/null 2>&1
-       GET /api/tags HTTP/1.1
-       Host: ollama:11434
-
-       EOF
-       ); do echo 'Waiting for ollama service...'; sleep 3; done;
-       echo 'Ollama is up. Checking models...';
-       ollama pull llava || ollama pull llava-phi3 || true"
-    networks:
-      - satquery_network
-    restart: "no"
 
   backend:
     build:
@@ -88,7 +74,7 @@ services:
       db:
         condition: service_healthy
       ollama:
-        condition: service_started
+        condition: service_healthy
     networks:
       - satquery_network
     healthcheck:
@@ -97,9 +83,10 @@ services:
           "CMD-SHELL",
           "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\"",
         ]
-      interval: 20s
-      timeout: 10s
-      retries: 8
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
     restart: unless-stopped
 
   frontend:
@@ -112,7 +99,8 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - satquery_network
     restart: unless-stopped
