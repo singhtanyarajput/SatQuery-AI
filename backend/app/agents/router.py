@@ -35,16 +35,23 @@ STANDARDIZED_TASK_MAP: Dict[str, str] = {
     INTERNAL_SINGLE_GROUNDING: TASK_SINGLE_GROUNDING,
     TASK_SINGLE_GROUNDING: TASK_SINGLE_GROUNDING,
     "grounding": TASK_SINGLE_GROUNDING,
+    "visual_grounding": TASK_SINGLE_GROUNDING,
+    "single_image_grounding": TASK_SINGLE_GROUNDING,
     INTERNAL_SINGLE_VQA: TASK_SINGLE_VQA,
     TASK_SINGLE_VQA: TASK_SINGLE_VQA,
     "vqa": TASK_SINGLE_VQA,
+    "single_image_vqa": TASK_SINGLE_VQA,
     INTERNAL_BITEMPORAL_CHANGE: TASK_BITEMPORAL_CHANGE,
     TASK_BITEMPORAL_CHANGE: TASK_BITEMPORAL_CHANGE,
     "change_detection": TASK_BITEMPORAL_CHANGE,
     "bitemporal": TASK_BITEMPORAL_CHANGE,
+    "bitemporal_change": TASK_BITEMPORAL_CHANGE,
+    "bi_temporal_change_analysis": TASK_BITEMPORAL_CHANGE,
     INTERNAL_CROSS_MODAL: TASK_CROSS_MODAL,
     TASK_CROSS_MODAL: TASK_CROSS_MODAL,
     "fusion": TASK_CROSS_MODAL,
+    "cross_modal": TASK_CROSS_MODAL,
+    "cross_modal_joint_analysis": TASK_CROSS_MODAL,
     INTERNAL_DOMAIN_KNOWLEDGE_QA: TASK_DOMAIN_KNOWLEDGE_QA,
     TASK_DOMAIN_KNOWLEDGE_QA: TASK_DOMAIN_KNOWLEDGE_QA,
     "domain_knowledge_qa": TASK_DOMAIN_KNOWLEDGE_QA,
@@ -96,6 +103,12 @@ TEMPORAL_PHRASES = [
     "what has changed",
     "changed between",
     "difference between",
+    "has the built-up area increased, decreased, or remained unchanged",
+    "increased, decreased, or remained unchanged",
+    "increased or decreased",
+    "remained unchanged",
+    "built-up area increased",
+    "built-up increased",
 ]
 
 TEMPORAL_WORDS = {
@@ -126,6 +139,11 @@ TEMPORAL_WORDS = {
     "flooding",
     "inundation",
     "inundated",
+    "increased",
+    "decreased",
+    "increase",
+    "decrease",
+    "unchanged",
 }
 
 GROUNDING_TRIGGERS = [

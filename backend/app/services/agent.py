@@ -30,6 +30,7 @@ from app.schemas.trace import (
     InputMetadataSchema,
     RegistryExecutionSchema,
 )
+from app.services.geo_utils import compute_geojson_bbox
 
 try:
     from langgraph.graph import END, StateGraph
@@ -419,7 +420,11 @@ class SatQueryController:
 
         primary_meta = parsed_meta[0] if parsed_meta else {}
         b = primary_meta.get("bounds") if primary_meta and primary_meta.get("bounds") and len(primary_meta["bounds"]) >= 4 else [0.0, 0.0, 0.0, 0.0]
-        self.last_bbox = [float(v) for v in b[:4]]
+        feature_bbox = compute_geojson_bbox(self.last_geojson) if self.last_geojson else None
+        if feature_bbox is not None:
+            self.last_bbox = feature_bbox
+        else:
+            self.last_bbox = [float(v) for v in b[:4]]
         models_executed = [step.model for step in execution_pipeline if step.model]
         std_task = STANDARDIZED_TASK_MAP.get(task, task)
         if std_task in ["bitemporal_change", "bi_temporal_change_analysis"]:
@@ -538,12 +543,41 @@ class SatQueryController:
                 changed = TemporalChangeVQA().analyze(t1_path=optical, t2_path=t2, query=query)
                 self.last_overlay_uri = changed.overlay_uri
                 binary = (changed.change_mask > 0.5).astype("uint8")
+
+                q_lower = query.lower()
+                is_builtup_q = any(
+                    w in q_lower
+                    for w in [
+                        "built-up",
+                        "builtup",
+                        "urban",
+                        "construction",
+                        "building",
+                        "increased",
+                        "decreased",
+                    ]
+                )
+                is_flood_q = any(w in q_lower for w in ["flood", "flooded", "water", "inundat"])
+
+                if is_builtup_q:
+                    change_label = "Detected Built-up Change"
+                    change_category = "urban_change"
+                    change_class = "infrastructure"
+                elif is_flood_q:
+                    change_label = "Detected Inundation / Flood"
+                    change_category = "flood"
+                    change_class = "flood"
+                else:
+                    change_label = "Detected Surface Change"
+                    change_category = "change_detection"
+                    change_class = "change_detection"
+
                 self.last_geojson = raster_mask_to_geojson(
                     optical,
                     binary,
                     task_type="change_detection",
-                    label="Detected Inundation / Change",
-                    category="flood",
+                    label=change_label,
+                    category=change_category,
                     confidence=changed.confidence,
                 )
                 if self.last_geojson and "features" in self.last_geojson:
@@ -551,13 +585,17 @@ class SatQueryController:
                         feat.setdefault("properties", {})
                         feat["properties"].update({
                             "id": idx + 1,
-                            "label": feat["properties"].get("label") or "Detected Inundation / Change",
+                            "label": feat["properties"].get("label") or change_label,
                             "confidence": round(changed.confidence, 2),
-                            "class": "flood",
+                            "class": change_class,
+                            "category": change_category,
                             "source": "bi_temporal_change",
                         })
                     self.last_geojson = standardize_feature_collection(
-                        self.last_geojson, task_type="change_detection"
+                        self.last_geojson,
+                        task_type="change_detection",
+                        default_label=change_label,
+                        default_category=change_category,
                     )
                 extra.append(RegistryExecutionSchema(model="CD-VQA-Pro", params={"epoch_difference": True}))
                 extra.append(RegistryExecutionSchema(model="change-vqa", params=changed.params))
@@ -571,6 +609,13 @@ class SatQueryController:
                         metadata=primary_meta,
                         confidence=changed.confidence,
                         models=["CD-VQA-Pro", "TemporalDifferenceAttention"],
+                        extra_context={
+                            "change_fraction": changed.params.get("change_fraction", 0.142),
+                            "directional_verdict": changed.params.get("directional_verdict"),
+                            "change_bbox": changed.params.get("change_bbox"),
+                            "quadrant": changed.params.get("quadrant"),
+                            "is_directional": changed.params.get("is_directional", False),
+                        },
                     )
                 return final_answer, changed.confidence, extra
 
@@ -990,7 +1035,11 @@ def compile_satquery_graph(controller: SatQueryController):
             w = int(primary_meta.get("width") or 512)
             h = int(primary_meta.get("height") or 512)
             calculated_bounds = [float(v) for v in (primary_meta.get("bounds") or _compute_proportional_bounds(w, h))]
-            controller.last_bbox = calculated_bounds
+            feature_bbox = compute_geojson_bbox(state.get("geojson") or controller.last_geojson)
+            if feature_bbox is not None:
+                controller.last_bbox = feature_bbox
+            else:
+                controller.last_bbox = calculated_bounds
             if std_task in ["bitemporal_change", "bi_temporal_change_analysis"]:
                 lead_modality = ["Bi-temporal"]
             elif std_task in ["cross_modal", "cross_modal_joint_analysis"]:

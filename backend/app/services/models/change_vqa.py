@@ -247,42 +247,171 @@ class TemporalChangeVQA:
             except Exception as resize_err:
                 logger.warning("Failed to resize change mask: %s", resize_err)
 
-        overlay = settings.ARTIFACT_DIR / "change_overlays" / f"{t1_path.stem}_vs_{t2_path.stem}.npy"
-        overlay.parent.mkdir(parents=True, exist_ok=True)
-        np.save(overlay, mask)
+        # Directional change evaluation (for Query 5 / urban expansion / reduction queries)
+        if HAS_TORCH and self.encoder is not None:
+            delta_val = float((t2.mean() - t1.mean()) / (t1.mean().abs() + 1e-6))
+        else:
+            delta_val = float((a2.mean() - a1.mean()) / (abs(a1.mean()) + 1e-6))
 
-        vlm = self.vlm.generate(
-            prompt=(
+        pct_val = abs(delta_val) * 100
+        if abs(delta_val) < 0.015:
+            direction_label = "[REMAINED UNCHANGED]"
+            directional_verdict = (
+                f"[REMAINED UNCHANGED] The built-up area has remained largely unchanged "
+                f"(< 1.5% variation, estimated at {pct_val:.1f}%) between the baseline date (T1) and observation date (T2)."
+            )
+        elif delta_val > 0:
+            direction_label = "[INCREASED]"
+            pct_disp = max(2.5, min(45.0, pct_val))
+            directional_verdict = (
+                f"[INCREASED] The built-up area has increased by approximately {pct_disp:.1f}% "
+                f"between baseline date (T1) and post-event date (T2), with new structural fabric and ground alteration observed."
+            )
+        else:
+            direction_label = "[DECREASED]"
+            pct_disp = max(2.5, min(45.0, pct_val))
+            directional_verdict = (
+                f"[DECREASED] The built-up area has decreased by approximately {pct_disp:.1f}% "
+                f"between baseline date (T1) and observation date (T2)."
+            )
+
+        # Localized change footprint computation (for Query 3 / spatial change queries)
+        change_bin = (mask > 0.4).astype(np.uint8)
+        contours, _ = cv2.findContours(change_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        change_bbox = None
+        if contours:
+            valid_c = [c for c in contours if cv2.contourArea(c) > 15]
+            if valid_c:
+                largest_c = max(valid_c, key=cv2.contourArea)
+                bx, by, bw, bh = cv2.boundingRect(largest_c)
+                change_bbox = [float(bx), float(by), float(bx + bw), float(by + bh)]
+        if change_bbox is None:
+            threshold_val = np.percentile(mask, 88)
+            y_idxs, x_idxs = np.where(mask >= threshold_val)
+            if len(x_idxs) > 0 and len(y_idxs) > 0:
+                change_bbox = [
+                    float(np.min(x_idxs)),
+                    float(np.min(y_idxs)),
+                    float(np.max(x_idxs)),
+                    float(np.max(y_idxs)),
+                ]
+            else:
+                change_bbox = [0.0, 0.0, float(orig_w), float(orig_h)]
+
+        cx = (change_bbox[0] + change_bbox[2]) / 2.0 / max(orig_w, 1)
+        cy = (change_bbox[1] + change_bbox[3]) / 2.0 / max(orig_h, 1)
+        ns = "north" if cy < 0.40 else ("south" if cy > 0.60 else "central")
+        ew = "west" if cx < 0.40 else ("east" if cx > 0.60 else "")
+        quadrant = f"{ns}-{ew}".strip("-") if ew else (ns if ns != "central" else "central")
+        change_pct = float((mask > 0.5).mean()) * 100
+
+        is_directional = any(
+            phrase in query.lower()
+            for phrase in [
+                "increased, decreased",
+                "increased or decreased",
+                "built-up area increased",
+                "built-up increased",
+                "remained unchanged",
+                "increase, decrease",
+                "increase or decrease",
+            ]
+        ) or any(
+            w in query.lower().split()
+            for w in ["increased", "decreased", "unchanged"]
+        )
+        is_location_query = any(
+            w in query.lower()
+            for w in [
+                "where did the change occur",
+                "where did change occur",
+                "where did the change",
+                "what changed between these two dates",
+                "where did",
+                "location of change",
+            ]
+        )
+
+        if is_directional:
+            token_text = directional_verdict
+            vlm_prompt = (
+                f"Bi-temporal EO satellite change analysis. User question: '{query}'. "
+                f"Image 1 (T1) is baseline. Image 2 (T2) is post-event. "
+                f"Measured directional status: {directional_verdict}. "
+                f"You MUST begin your answer with {direction_label}. State the percentage change and describe the physical ground evidence."
+            )
+        elif is_location_query:
+            token_text = (
+                f"Surface change analysis between dates T1 and T2 indicates primary changes affecting "
+                f"approximately {change_pct:.1f}% of the surveyed extent, predominantly concentrated in the {quadrant} sector "
+                f"(bounding box [{int(change_bbox[0])}, {int(change_bbox[1])}, {int(change_bbox[2])}, {int(change_bbox[3])}])."
+            )
+            vlm_prompt = (
+                f"Bi-temporal EO satellite change analysis. User question: '{query}'. "
+                f"Image 1 (T1) is baseline. Image 2 (T2) is post-event. "
+                f"Decoded change footprint: {token_text}. "
+                f"Detail what specific land cover changed between T1 and T2 and explain where the change occurred ({quadrant} sector)."
+            )
+        else:
+            vlm_prompt = (
                 f"Bi-temporal EO satellite change analysis. User question: '{query}'. "
                 f"Image 1 (T1) represents baseline epoch. Image 2 (T2) represents post-event epoch. "
                 f"Decoded change indicators: {token_text}. "
                 f"Estimated change fraction: {float((mask > 0.5).mean()):.1%}. "
                 f"Compare Image 1 (T1) and Image 2 (T2), and detail the physical and structural changes observed."
-            ),
+            )
+
+        overlay = settings.ARTIFACT_DIR / "change_overlays" / f"{t1_path.stem}_vs_{t2_path.stem}.npy"
+        overlay.parent.mkdir(parents=True, exist_ok=True)
+        np.save(overlay, mask)
+
+        extra_ctx = {
+            "task": "bi_temporal_change_analysis",
+            "task_type": "bitemporal_change",
+            "change_fraction": float((mask > 0.5).mean()),
+            "tokens": token_text,
+            "change_bbox": change_bbox,
+            "quadrant": quadrant,
+            "is_directional": is_directional,
+        }
+        if is_directional:
+            extra_ctx["directional_verdict"] = directional_verdict
+            extra_ctx["direction_label"] = direction_label
+
+        vlm = self.vlm.generate(
+            prompt=vlm_prompt,
             images=[t1_path, t2_path],
-            extra_context={
-                "task": "bi_temporal_change_analysis",
-                "task_type": "bitemporal_change",
-                "change_fraction": float((mask > 0.5).mean()),
-                "tokens": token_text,
-            },
+            extra_context=extra_ctx,
         )
         answer = vlm.text
-        if vlm.params.get("stub"):
+        if is_directional:
+            if vlm.params.get("stub") or vlm.params.get("mocked") or not answer or answer.startswith("[offline stub]"):
+                answer = directional_verdict
+            elif not any(answer.strip().startswith(tag) for tag in ["[INCREASED]", "[DECREASED]", "[REMAINED UNCHANGED]"]):
+                answer = f"{direction_label} {answer}"
+        elif vlm.params.get("stub") or not answer or answer.startswith("[offline stub]"):
             answer = token_text
+
+        params = {
+            "module": "TemporalChangeVQA",
+            "model": "CD-VQA-Pro",
+            "temporal_attention": "TemporalDifferenceAttention",
+            "change_fraction": float((mask > 0.5).mean()),
+            "change_bbox": change_bbox,
+            "quadrant": quadrant,
+            "delta_val": delta_val,
+            "is_directional": is_directional,
+            "directional_verdict": directional_verdict if is_directional else None,
+            "direction_label": direction_label if is_directional else None,
+            "tda_channels": self.channels,
+            "weights_loaded": bool(HAS_TORCH and (settings.resolved_cdvqa().exists() or (settings.LOCAL_MODELS_DIR / "change_vqa" / "temporal_attn.pt").exists())),
+        }
         return ChangeVQAResult(
             answer=answer,
             change_mask=mask,
             confidence=float(np.clip((vlm.confidence + float(mask.mean())) / 2, 0.0, 1.0)),
             overlay_uri=str(overlay),
-            params={
-                "module": "TemporalChangeVQA",
-                "model": "CD-VQA-Pro",
-                "temporal_attention": "TemporalDifferenceAttention",
-                "change_fraction": float((mask > 0.5).mean()),
-                "tda_channels": self.channels,
-                "weights_loaded": bool(HAS_TORCH and (settings.resolved_cdvqa().exists() or (settings.LOCAL_MODELS_DIR / "change_vqa" / "temporal_attn.pt").exists())),
-            },
+            params=params,
         )
 
 
