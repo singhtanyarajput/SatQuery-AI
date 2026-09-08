@@ -47,27 +47,19 @@ export default function TopNavbar({ onToggleSidebar, onOpenSidebar, isSidebarCol
         <button
           type="button"
           onClick={handleTopLogoClick}
-          className="flex items-center space-x-2.5 text-left group cursor-pointer focus:outline-none"
+          className="flex items-center space-x-3 text-left group cursor-pointer focus:outline-none"
           title="SatQuery AI Workspace"
         >
-          <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-brand-600 to-cyan-500 shadow-sm shadow-brand-500/20 text-white group-hover:scale-105 transition-transform">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-4.5 w-4.5"
-            >
-              <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
-            </svg>
-          </div>
+          <img
+            src={theme === "dark" ? "/logo-dark.png" : "/logo-light.png"}
+            alt="SatQuery AI Official Logo"
+            className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl object-contain shadow-xs transition-transform group-hover:scale-105 flex-shrink-0"
+          />
           <div className="hidden xs:block">
-            <span className="text-sm font-bold tracking-tight text-slate-900 dark:text-white leading-tight block">
+            <span className="text-sm sm:text-base font-bold tracking-tight text-slate-900 dark:text-white leading-tight block">
               SatQuery AI
             </span>
-            <p className="text-[10px] font-medium text-slate-400 dark:text-slate-400 leading-tight">
+            <p className="text-[10px] sm:text-[10.5px] font-semibold text-cyan-600 dark:text-cyan-400 leading-tight tracking-wide">
               Satellite Intelligence
             </p>
           </div>
