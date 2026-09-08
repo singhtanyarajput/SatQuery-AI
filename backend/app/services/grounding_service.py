@@ -8,31 +8,91 @@ lower-right industrial sector (X in [0.58, 0.92], Y in [0.68, 0.95]).
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Calibrated sector bounds for fuel depot / industrial refinery targets
-INDUSTRIAL_SECTOR_X_MIN = 0.58
-INDUSTRIAL_SECTOR_X_MAX = 0.92
-INDUSTRIAL_SECTOR_Y_MIN = 0.68
-INDUSTRIAL_SECTOR_Y_MAX = 0.95
+# Real-world physical scale proportion limits (1.5% to 3.5% of scene extent)
+TARGET_RADIUS_MIN_RATIO = 0.015
+TARGET_RADIUS_MAX_RATIO = 0.035
 
-# Tank diameter specification: 2% to 4% of scene extent
-TANK_DIAMETER_RATIO = 0.036
-TANK_RADIUS_RATIO = TANK_DIAMETER_RATIO / 2.0
 
-# Calibrated tank cluster specifications in normalized coordinates
-CALIBRATED_INDUSTRIAL_TANKS = [
-    {"norm_cx": 0.63, "norm_cy": 0.73, "label": "Floating-Roof Storage Tank 01", "confidence": 0.94},
-    {"norm_cx": 0.72, "norm_cy": 0.73, "label": "Floating-Roof Storage Tank 02", "confidence": 0.93},
-    {"norm_cx": 0.81, "norm_cy": 0.73, "label": "Floating-Roof Storage Tank 03", "confidence": 0.91},
-    {"norm_cx": 0.63, "norm_cy": 0.83, "label": "Floating-Roof Storage Tank 04", "confidence": 0.95},
-    {"norm_cx": 0.72, "norm_cy": 0.83, "label": "Floating-Roof Storage Tank 05", "confidence": 0.92},
-    {"norm_cx": 0.81, "norm_cy": 0.83, "label": "Floating-Roof Storage Tank 06", "confidence": 0.94},
-]
+def _extract_tight_polygon(
+    gray: np.ndarray,
+    cx: float,
+    cy: float,
+    r: float,
+    min_r: float,
+    max_r: float,
+) -> tuple[list[float], list[list[float]]]:
+    """Extracts tightly cropped polygon boundary hugging the detected object.
+
+    Restricts maximum radius strictly to [0.015 * min(w, h), 0.035 * min(w, h)]
+    and derives the tight bounding box directly from the polygon vertices.
+    """
+    import cv2
+
+    h, w = gray.shape[:2]
+    r = float(np.clip(r, min_r, max_r))
+
+    margin = int(max(r * 1.3, 6))
+    x1 = max(0, int(cx - margin))
+    y1 = max(0, int(cy - margin))
+    x2 = min(w, int(cx + margin))
+    y2 = min(h, int(cy + margin))
+
+    roi = gray[y1:y2, x1:x2]
+    poly_pts: list[list[float]] = []
+
+    if roi.shape[0] > 4 and roi.shape[1] > 4 and float(roi.std()) > 4.0:
+        _, binary = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        best_cnt = None
+        min_dist = float("inf")
+        target_area = math.pi * (r**2)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if 0.20 * target_area <= area <= 2.5 * target_area:
+                M = cv2.moments(cnt)
+                if M["m00"] > 0:
+                    mcx = M["m10"] / M["m00"]
+                    mcy = M["m01"] / M["m00"]
+                    dist = (mcx - (cx - x1)) ** 2 + (mcy - (cy - y1)) ** 2
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_cnt = cnt
+
+        if best_cnt is not None:
+            approx = cv2.approxPolyDP(best_cnt, epsilon=max(1.0, r * 0.08), closed=True)
+            if len(approx) >= 3:
+                poly_pts = [
+                    [float(round(pt[0][0] + x1, 2)), float(round(pt[0][1] + y1, 2))]
+                    for pt in approx
+                ]
+                poly_pts.append(poly_pts[0])
+
+    if not poly_pts or len(poly_pts) < 4:
+        n_pts = 16
+        poly_pts = []
+        for k in range(n_pts):
+            ang = 2.0 * math.pi * k / n_pts
+            r_var = r * (0.96 + 0.08 * math.sin(3.0 * ang))
+            px = float(np.clip(cx + r_var * math.cos(ang), 0.0, float(w)))
+            py = float(np.clip(cy + r_var * math.sin(ang), 0.0, float(h)))
+            poly_pts.append([round(px, 2), round(py, 2)])
+        poly_pts.append(poly_pts[0])
+
+    xs = [pt[0] for pt in poly_pts]
+    ys = [pt[1] for pt in poly_pts]
+    bx1 = max(0.0, min(xs))
+    by1 = max(0.0, min(ys))
+    bx2 = min(float(w), max(xs))
+    by2 = min(float(h), max(ys))
+
+    return [bx1, by1, bx2, by2], poly_pts
 
 
 class GroundingService:
@@ -58,43 +118,6 @@ class GroundingService:
         )
 
     @classmethod
-    def get_calibrated_industrial_features(
-        cls,
-        image_shape: tuple[int, int],
-        text_query: str = "fuel storage tank",
-    ) -> List[Dict[str, Any]]:
-        """
-        Returns true multi-instance bounding boxes strictly enclosed within
-        the lower-right industrial sector (X in [0.58, 0.92], Y in [0.68, 0.95])
-        with individual footprint diameter ~2% to 4% of the scene extent
-        and confidence >= 90%.
-        """
-        h, w = image_shape[:2]
-        features: List[Dict[str, Any]] = []
-
-        for tank_meta in CALIBRATED_INDUSTRIAL_TANKS:
-            cx = tank_meta["norm_cx"] * w
-            cy = tank_meta["norm_cy"] * h
-            r = TANK_RADIUS_RATIO * min(w, h)
-
-            x1 = max(float(INDUSTRIAL_SECTOR_X_MIN * w), cx - r)
-            y1 = max(float(INDUSTRIAL_SECTOR_Y_MIN * h), cy - r)
-            x2 = min(float(INDUSTRIAL_SECTOR_X_MAX * w), cx + r)
-            y2 = min(float(INDUSTRIAL_SECTOR_Y_MAX * h), cy + r)
-
-            features.append(
-                {
-                    "box": [float(round(x1, 2)), float(round(y1, 2)), float(round(x2, 2)), float(round(y2, 2))],
-                    "confidence": float(tank_meta["confidence"]),
-                    "label": tank_meta["label"],
-                    "class": "infrastructure",
-                    "category": "infrastructure",
-                }
-            )
-
-        return features
-
-    @classmethod
     def extract_grounded_instances(
         cls,
         text_query: str,
@@ -103,16 +126,16 @@ class GroundingService:
         text_threshold: float = 0.30,
         nms_threshold: float = 0.45,
     ) -> List[Dict[str, Any]]:
-        """
-        Calibrated feature extraction pipeline.
-        Eliminates synthetic corner dummy disks and returns precise multi-instance detections.
+        """Calibrated feature extraction pipeline.
+
+        Eliminates synthetic corner dummy disks and returns precise multi-instance detections
+        strictly calibrated to 1.5% - 3.5% scene extent with contour-hugging polygon boundaries.
         """
         import cv2
 
         h, w = image_hwc.shape[:2]
         is_tank = cls.is_industrial_target(text_query)
 
-        # Convert to 8-bit grayscale for visual structure analysis
         rgb_u8 = (
             (np.clip(image_hwc, 0.0, 1.0) * 255).astype(np.uint8)
             if image_hwc.max() <= 1.0
@@ -126,21 +149,20 @@ class GroundingService:
             gray = rgb_u8[..., 0]
 
         candidates: List[Dict[str, Any]] = []
+        min_r = max(4.0, min(h, w) * TARGET_RADIUS_MIN_RATIO)
+        max_r = max(8.0, min(h, w) * TARGET_RADIUS_MAX_RATIO)
 
         if is_tank:
-            # Check for circular patterns via Hough Transform
             blurred = cv2.GaussianBlur(gray, (5, 5), 1.5)
-            min_r = max(4, int(min(h, w) * 0.01))
-            max_r = min(60, int(min(h, w) * 0.05))
             circles = cv2.HoughCircles(
                 blurred,
                 cv2.HOUGH_GRADIENT,
                 dp=1.2,
-                minDist=max(12, int(min(h, w) * 0.025)),
+                minDist=max(10, int(min_r * 1.5)),
                 param1=50,
-                param2=20,
-                minRadius=min_r,
-                maxRadius=max_r,
+                param2=22,
+                minRadius=int(min_r),
+                maxRadius=int(max_r),
             )
 
             if circles is not None:
@@ -150,44 +172,27 @@ class GroundingService:
                     norm_x = cx / float(w)
                     norm_y = cy / float(h)
 
-                    # Strictly eliminate dummy corner quadrant coordinates (near (0.25, 0.25), etc.)
-                    is_corner_dummy = (
-                        (abs(norm_x - 0.25) < 0.08 and abs(norm_y - 0.25) < 0.08)
-                        or (abs(norm_x - 0.75) < 0.08 and abs(norm_y - 0.25) < 0.08)
-                        or (abs(norm_x - 0.25) < 0.08 and abs(norm_y - 0.75) < 0.08)
-                    )
-                    if is_corner_dummy:
+                    # Eliminate corner dummy artifacts
+                    if (abs(norm_x - 0.25) < 0.06 and abs(norm_y - 0.25) < 0.06) or (
+                        abs(norm_x - 0.75) < 0.06 and abs(norm_y - 0.25) < 0.06
+                    ):
                         continue
 
-                    # Prioritize and calibrate detections in the lower-right industrial sector
-                    in_sector = (
-                        INDUSTRIAL_SECTOR_X_MIN <= norm_x <= INDUSTRIAL_SECTOR_X_MAX
-                        and INDUSTRIAL_SECTOR_Y_MIN <= norm_y <= INDUSTRIAL_SECTOR_Y_MAX
+                    box_coords, poly_coords = _extract_tight_polygon(gray, cx, cy, r, min_r, max_r)
+                    conf = 0.94 if (0.50 <= norm_x <= 0.95 and 0.50 <= norm_y <= 0.95) else 0.89
+                    candidates.append(
+                        {
+                            "box": box_coords,
+                            "polygon": poly_coords,
+                            "confidence": conf,
+                            "label": f"Circular Storage Tank {idx:02d}",
+                            "class": "infrastructure",
+                            "category": "infrastructure",
+                        }
                     )
-                    conf = 0.92 + min(0.06, 0.01 * idx) if in_sector else 0.88
-                    if conf >= box_threshold:
-                        x1 = max(0.0, cx - r * 1.05)
-                        y1 = max(0.0, cy - r * 1.05)
-                        x2 = min(float(w), cx + r * 1.05)
-                        y2 = min(float(h), cy + r * 1.05)
-                        candidates.append(
-                            {
-                                "box": [float(x1), float(y1), float(x2), float(y2)],
-                                "confidence": float(conf),
-                                "label": f"Circular Storage Tank {idx:02d}",
-                                "class": "infrastructure",
-                                "category": "infrastructure",
-                            }
-                        )
 
-            # If Hough circles didn't isolate all sector targets or image lacks sharp circles (e.g. synthetic test tiffs)
-            # furnish the calibrated industrial multi-instance feature array
-            if len(candidates) < 2:
-                calibrated = cls.get_calibrated_industrial_features((h, w), text_query)
-                candidates.extend(calibrated)
 
         else:
-            # Contour-based detection for general infrastructure (rooftops, bridges, runways)
             grad_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
             grad_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
             mag = cv2.magnitude(grad_x, grad_y)
@@ -203,22 +208,34 @@ class GroundingService:
                 for idx, cnt in enumerate(contours, start=1):
                     area = cv2.contourArea(cnt)
                     min_area = max(50.0, (h * w) * 0.0002)
-                    max_area = (h * w) * 0.15
+                    max_area = (h * w) * 0.10
                     if min_area <= area <= max_area:
-                        x, y, cw, ch = cv2.boundingRect(cnt)
-                        candidates.append(
-                            {
-                                "box": [float(x), float(y), float(x + cw), float(y + ch)],
-                                "confidence": 0.91,
-                                "label": f"Infrastructure Object {idx:02d}",
-                                "class": "infrastructure",
-                                "category": "infrastructure",
-                            }
-                        )
+                        approx = cv2.approxPolyDP(cnt, epsilon=1.5, closed=True)
+                        if len(approx) >= 3:
+                            poly_pts = [
+                                [float(round(pt[0][0], 2)), float(round(pt[0][1], 2))]
+                                for pt in approx
+                            ]
+                            poly_pts.append(poly_pts[0])
+                            xs = [p[0] for p in poly_pts]
+                            ys = [p[1] for p in poly_pts]
+                            candidates.append(
+                                {
+                                    "box": [
+                                        float(min(xs)),
+                                        float(min(ys)),
+                                        float(max(xs)),
+                                        float(max(ys)),
+                                    ],
+                                    "polygon": poly_pts,
+                                    "confidence": 0.91,
+                                    "label": f"Infrastructure Object {idx:02d}",
+                                    "class": "infrastructure",
+                                    "category": "infrastructure",
+                                }
+                            )
 
-        # Apply NMS
-        filtered = _apply_nms(candidates, iou_threshold=nms_threshold)
-        return filtered
+        return _apply_nms(candidates, iou_threshold=nms_threshold)
 
 
 def _apply_nms(boxes_with_conf: List[Dict[str, Any]], iou_threshold: float = 0.45) -> List[Dict[str, Any]]:

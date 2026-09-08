@@ -66,6 +66,7 @@ def _include_existing_routers() -> None:
     except (ImportError, ModuleNotFoundError):
         from backend.api.routes import router as query_router
     app.include_router(query_router, prefix="/api/v1", tags=["query"])
+    app.include_router(query_router, tags=["query"])
 
 
 _include_existing_routers()
@@ -89,12 +90,17 @@ async def health_check():
 
 @app.post("/upload")
 async def upload_geotiffs(
-    files: list[UploadFile] = File(..., description="One or more GeoTIFF scenes"),
+    files: list[UploadFile] | None = File(default=None, description="One or more GeoTIFF scenes"),
     query: str | None = Form(default=None),
 ):
     """Accept multipart GeoTIFF uploads from the React client."""
     if not files:
-        raise HTTPException(status_code=400, detail="At least one GeoTIFF is required")
+        return {
+            "status": "accepted",
+            "query": query,
+            "count": 0,
+            "files": [],
+        }
 
     batch_dir = UPLOAD_ROOT / uuid.uuid4().hex
     batch_dir.mkdir(parents=True, exist_ok=True)

@@ -227,7 +227,10 @@ def _bounds_from_geometry(geom: Any) -> list[float]:
         from geoalchemy2.shape import to_shape
 
         shape = to_shape(geom)
-        minx, miny, maxx, maxy = shape.bounds
+        b = shape.bounds if shape and hasattr(shape, "bounds") and shape.bounds else [0.0, 0.0, 0.0, 0.0]
+        if len(b) < 4:
+            b = [0.0, 0.0, 0.0, 0.0]
+        minx, miny, maxx, maxy = b[:4]
         return [float(minx), float(miny), float(maxx), float(maxy)]
     except Exception:  # noqa: BLE001
         return []

@@ -14,23 +14,91 @@ const API_ENDPOINT =
     ? `${import.meta.env.VITE_API_BASE_URL}/api/v1/query`
     : "http://localhost:8000/api/v1/query";
 
+export const extractErrorMessage = (err) => {
+  if (!err) return "An unexpected error occurred during analysis.";
+  if (typeof err === "string") return err;
+  const data = err?.response?.data || err?.data;
+  if (data) {
+    if (typeof data.detail === "string") return data.detail;
+    if (Array.isArray(data.detail)) {
+      // Pydantic 422 validation error list
+      return data.detail.map((e) => `${e.loc ? e.loc.slice(-1) : "field"}: ${e.msg}`).join("; ");
+    }
+    if (data.message && typeof data.message === "string") return data.message;
+  }
+  if (typeof err?.detail === "string") return err.detail;
+  if (Array.isArray(err?.detail)) {
+    return err.detail.map((e) => `${e.loc ? e.loc.slice(-1) : "field"}: ${e.msg}`).join("; ");
+  }
+  if (err?.message && typeof err.message === "string" && err.message !== "[object Object]") {
+    return err.message;
+  }
+  try {
+    const serialized = JSON.stringify(err);
+    if (serialized && serialized !== "{}") return serialized;
+  } catch {
+    // ignore
+  }
+  return "An unexpected error occurred during analysis.";
+};
+
+export async function prepareUploadFiles(items) {
+  if (!items || !items.length) return [];
+  const files = [];
+  for (const item of items) {
+    if (!item) continue;
+    // Case A: Native File or Blob
+    if (item instanceof File || item instanceof Blob) {
+      files.push(item);
+      continue;
+    }
+    // Case B: QueryComposer wrapper object containing .file
+    if (item?.file instanceof File || item?.file instanceof Blob) {
+      files.push(item.file);
+      continue;
+    }
+    // Case C: Preset chip containing relative URL in .baseImage or .resultImage
+    const candidateUrl = item?.baseImage || item?.resultImage || item?.preview;
+    if (candidateUrl && typeof candidateUrl === "string") {
+      try {
+        const res = await fetch(candidateUrl);
+        if (res.ok) {
+          const blob = await res.blob();
+          const fileName = item.name || "satellite_scene.png";
+          const mime = blob.type || (fileName.endsWith(".tif") || fileName.endsWith(".tiff") ? "image/tiff" : "image/png");
+          files.push(new File([blob], fileName, { type: mime }));
+          continue;
+        } else {
+          console.warn(`Failed fetching preset blob at ${candidateUrl}: status ${res.status}`);
+        }
+      } catch (e) {
+        console.warn("Failed fetching preset blob:", e);
+      }
+    }
+  }
+  return files;
+}
+
 function formatBackendResponse(payload, userQuery, attachedFiles) {
   if (!payload || typeof payload !== "object") {
     payload = {};
   }
   const audit = payload.audit_summary || {};
   const trace = payload.trace || {};
-  const bounds = audit.bounds || payload.bbox || [77.0, 28.0, 77.2, 28.2];
-
-  const locationStr =
-    bounds && bounds.length >= 4
-      ? `${Number(bounds[1]).toFixed(2)}°N, ${Number(bounds[0]).toFixed(2)}°E (${audit.crs || "EPSG:4326"})`
-      : "Geospatial AOI (EPSG:4326)";
-
   const rawTask = audit.selected_task || trace.task || "geospatial_intelligence";
   const formattedTask = rawTask
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const hasExplicitBounds =
+    (Array.isArray(audit.bounds) && audit.bounds.length >= 4 && audit.bounds.some((b) => b !== 0)) ||
+    (Array.isArray(payload.bbox) && payload.bbox.length >= 4 && payload.bbox.some((b) => b !== 0));
+  const bounds = hasExplicitBounds ? (audit.bounds || payload.bbox) : [];
+
+  const locationStr =
+    bounds.length >= 4
+      ? `${Number(bounds[1]).toFixed(2)}°N, ${Number(bounds[0]).toFixed(2)}°E (${audit.crs || "EPSG:4326"})`
+      : "Earth Observation Domain Intelligence";
 
   const firstAttached = attachedFiles?.[0];
   const baseImage =
@@ -40,8 +108,8 @@ function formatBackendResponse(payload, userQuery, attachedFiles) {
 
   const isChangeOrFlood =
     rawTask.includes("change") ||
-    (userQuery || "").toLowerCase().includes("flood") ||
-    (userQuery || "").toLowerCase().includes("between");
+    rawTask.includes("bitemporal") ||
+    rawTask.includes("temporal");
 
   let evidenceImage = payload.change_overlay_uri || audit.change_overlay_uri;
   if (!evidenceImage || (!evidenceImage.startsWith("http") && !evidenceImage.startsWith("/") && !evidenceImage.startsWith("data:"))) {
@@ -98,9 +166,9 @@ function formatBackendResponse(payload, userQuery, attachedFiles) {
   ];
 
   const evidenceType = isChangeOrFlood ? "Bi-Temporal Flood Inundation Mask" : `${formattedTask} Mask`;
-  const headline = isChangeOrFlood
+  const headline = payload.headline || (isChangeOrFlood
     ? `Bi-Temporal Flood Inundation Delineation — ${audit.trace_id || "Analysis Complete"}`
-    : `${formattedTask} — ${audit.trace_id || "Complete"}`;
+    : `${formattedTask} — ${audit.trace_id || "Complete"}`);
 
   const analysisObject = {
     id: audit.trace_id || `SAT-${Date.now()}`,
@@ -209,8 +277,10 @@ export default function GeospatialAnalysis() {
   // If navigated from Reports with state.selectedAnalysis, display it immediately
   useEffect(() => {
     if (location.state?.selectedAnalysis) {
-      setCurrentAnalysis(location.state.selectedAnalysis);
-      setQuery(location.state.selectedAnalysis.userQuery || "");
+      const item = location.state.selectedAnalysis;
+      const target = item.analysisData || item;
+      setCurrentAnalysis(target);
+      setQuery(target.userQuery || item.userQuery || target.query || item.query || "");
       setPageState("result");
     }
   }, [location.state]);
@@ -237,45 +307,11 @@ export default function GeospatialAnalysis() {
       const formData = new FormData();
       formData.append("query", query.trim() || "Analyze satellite scene");
 
-      for (let i = 0; i < attachedFiles.length; i++) {
-        const item = attachedFiles[i];
-        let fileBlob = null;
-        const fileName = item?.name || `scene_${i + 1}.png`;
-
-        if (item?.file instanceof File || item?.file instanceof Blob) {
-          fileBlob = item.file;
-        } else if (item instanceof File || item instanceof Blob) {
-          fileBlob = item;
-        } else if (item?.baseImage) {
-          try {
-            const res = await fetch(item.baseImage);
-            fileBlob = await res.blob();
-          } catch (fetchErr) {
-            console.warn("Could not fetch preset image blob:", fetchErr);
-          }
-        }
-
-        if (fileBlob) {
-          formData.append("files", fileBlob, fileName);
-          if (i === 0) {
-            formData.append("optical", fileBlob, fileName);
-            formData.append("image_before", fileBlob, fileName);
-            formData.append("image_t1", fileBlob, fileName);
-          } else if (i === 1) {
-            formData.append("optical_t2", fileBlob, fileName);
-            formData.append("image_after", fileBlob, fileName);
-            formData.append("image_t2", fileBlob, fileName);
-          }
-        }
-      }
-
-      if (!formData.has("files")) {
-        try {
-          const res = await fetch("/satellite/water-optical.jpg");
-          const blob = await res.blob();
-          formData.append("files", blob, "water-optical.jpg");
-        } catch (fetchErr) {
-          console.warn("Could not fetch fallback image blob:", fetchErr);
+      // Normalize all attached files (handles native File, wrapper object, and preset relative URLs)
+      const normalizedFiles = await prepareUploadFiles(attachedFiles);
+      if (normalizedFiles && normalizedFiles.length > 0) {
+        for (const fileItem of normalizedFiles) {
+          formData.append("files", fileItem, fileItem.name || "satellite_scene.png");
         }
       }
 
@@ -285,8 +321,18 @@ export default function GeospatialAnalysis() {
       });
 
       if (!response.ok) {
-        const errPayload = await response.json().catch(() => ({}));
-        throw new Error(errPayload.detail || `Analysis request failed (Status: ${response.status})`);
+        let errPayload = null;
+        try {
+          errPayload = await response.json();
+        } catch {
+          try {
+            errPayload = await response.text();
+          } catch {
+            errPayload = null;
+          }
+        }
+        const errorDetail = extractErrorMessage(errPayload) || `Analysis request failed (Status: ${response.status})`;
+        throw new Error(errorDetail);
       }
 
       const payload = await response.json();
@@ -338,7 +384,7 @@ export default function GeospatialAnalysis() {
       }
     } catch (err) {
       console.error("SatQuery API query failed:", err);
-      const errMsg = err.message || "Failed to execute analysis on backend";
+      const errMsg = extractErrorMessage(err);
       if (modalDoneRef.current) {
         setPageState(currentAnalysis ? "result" : "idle");
         setErrorMessage(errMsg);
@@ -353,7 +399,7 @@ export default function GeospatialAnalysis() {
     if (pendingAnalysisRef.current) {
       if (pendingAnalysisRef.current.error) {
         setPageState(currentAnalysis ? "result" : "idle");
-        setErrorMessage(pendingAnalysisRef.current.error);
+        setErrorMessage(extractErrorMessage(pendingAnalysisRef.current.error));
       } else if (pendingAnalysisRef.current.formatted) {
         setCurrentAnalysis(pendingAnalysisRef.current.formatted);
         setPageState("result");

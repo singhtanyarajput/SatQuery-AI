@@ -118,11 +118,13 @@ export default function MapViewer({
 
     map.on("pointermove", (evt) => {
       const lonLat = toLonLat(evt.coordinate);
-      setCoords({
-        lon: Number(lonLat[0].toFixed(4)),
-        lat: Number(lonLat[1].toFixed(4)),
-        zoom: Math.round(map.getView().getZoom() || 8),
-      });
+      if (Array.isArray(lonLat) && lonLat.length >= 2 && typeof lonLat[0] === "number" && typeof lonLat[1] === "number") {
+        setCoords({
+          lon: Number(lonLat[0].toFixed(4)),
+          lat: Number(lonLat[1].toFixed(4)),
+          zoom: Math.round(map.getView().getZoom() || 8),
+        });
+      }
     });
 
     mapRef.current = map;

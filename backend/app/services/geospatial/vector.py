@@ -120,16 +120,8 @@ def convert_raster_mask_to_geojson(
     if not polygons:
         return empty_feature_collection(crs)
 
-    if dissolve:
-        union_poly = _as_multipolygon(unary_union(polygons))
-        return {
-            "type": "Feature",
-            "geometry": {
-                "type": "MultiPolygon",
-                "coordinates": [_polygon_rings(poly) for poly in union_poly.geoms],
-            },
-            "properties": {"crs": crs, "dissolved": True},
-        }
+    union_poly = _as_multipolygon(unary_union(polygons))
+    rings = [_polygon_rings(poly) for poly in union_poly.geoms]
 
     features = []
     for idx, poly in enumerate(polygons, start=1):
@@ -143,11 +135,14 @@ def convert_raster_mask_to_geojson(
                 "properties": {"crs": crs, "label": "Detected region"},
             }
         )
-    if not features:
-        return empty_feature_collection(crs)
+
     return {
-        "type": "FeatureCollection",
-        "crs": {"type": "name", "properties": {"name": crs}},
+        "type": "Feature",
+        "geometry": {
+            "type": "MultiPolygon",
+            "coordinates": rings,
+        },
+        "properties": {"crs": crs, "dissolved": dissolve},
         "features": features,
     }
 
@@ -264,7 +259,18 @@ def instances_to_geojson(
     for inst in filtered:
         box_px = inst.get("box") or inst.get("bbox_pixel") or [0, 0, 10, 10]
         x1, y1, x2, y2 = [float(v) for v in box_px[:4]]
-        poly = _pixel_box_to_polygon(affine, x1, y1, x2, y2)
+
+        poly_coords = inst.get("polygon") or inst.get("coordinates")
+        if poly_coords and len(poly_coords) >= 3:
+            geo_pts = [affine * (float(pt[0]), float(pt[1])) for pt in poly_coords]
+            if geo_pts[0] != geo_pts[-1]:
+                geo_pts.append(geo_pts[0])
+            poly = Polygon(geo_pts)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+        else:
+            poly = _pixel_box_to_polygon(affine, x1, y1, x2, y2)
+
         prepared.append(
             {
                 "geometry": poly,
@@ -484,13 +490,18 @@ def _pixel_box_to_polygon(affine: Affine, x1: float, y1: float, x2: float, y2: f
 
 
 def _geom_pixel_bbox(geom, affine: Affine) -> List[float]:
-    minx, miny, maxx, maxy = geom.bounds
-    inv = ~affine
-    c1 = inv * (minx, miny)
-    c2 = inv * (maxx, maxy)
-    xs = (c1[0], c2[0])
-    ys = (c1[1], c2[1])
-    return [min(xs), min(ys), max(xs), max(ys)]
+    if not hasattr(geom, "bounds") or not geom.bounds or len(geom.bounds) < 4:
+        return [0.0, 0.0, 100.0, 100.0]
+    minx, miny, maxx, maxy = geom.bounds[:4]
+    try:
+        inv = ~affine
+        c1 = inv * (minx, miny)
+        c2 = inv * (maxx, maxy)
+        xs = (c1[0], c2[0])
+        ys = (c1[1], c2[1])
+        return [float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys))]
+    except Exception:
+        return [0.0, 0.0, 100.0, 100.0]
 
 
 def _to_epsg_4326(geom, src_crs) -> Any:

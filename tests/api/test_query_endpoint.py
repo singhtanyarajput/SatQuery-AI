@@ -133,3 +133,142 @@ def test_query_endpoint_returns_answer_geometry_and_audit(monkeypatch, tmp_path:
     report = asyncio.run(_report())
     assert report.status_code == 200
     assert b"selected_task" in report.body
+
+
+def test_query_endpoint_text_only_domain_query(monkeypatch, tmp_path: Path) -> None:
+    pytest = __import__("pytest")
+    pytest.importorskip("rasterio")
+    import backend.api.routes as routes_mod
+
+    monkeypatch.setattr(routes_mod.settings, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(routes_mod.settings, "ARTIFACT_DIR", tmp_path / "artifacts")
+    (tmp_path / "uploads").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+
+    from app.services.models.base import VLMResult
+    monkeypatch.setattr(
+        "app.services.models.base.LocalVisionLanguageClient.generate",
+        lambda self, prompt, **kwargs: VLMResult(
+            text=f"The Sentinel-1 constellation provides C-band SAR observations with a 6-to-12 day revisit period. Analysis for: {prompt}",
+            confidence=0.92,
+            params={"backend": "ollama", "model": "llava"},
+        ),
+    )
+
+    async def _run():
+        return await routes_mod.query_pipeline(
+            query="What is the revisit period of Sentinel-1?",
+            files=None,
+            db=None,
+        )
+
+    envelope = asyncio.run(_run())
+    payload = envelope.model_dump()
+    assert payload["status"] == "ok"
+    assert payload["task_type"] == "domain_knowledge_qa"
+    assert payload["geojson"] is None
+    assert payload["bbox"] is None
+    assert payload["change_mask"] is None
+    assert "sentinel-1" in payload["answer"].lower()
+    assert payload["audit_summary"]["selected_task"] == "domain_knowledge_qa"
+    assert "Earth Observation Domain Knowledge" in payload["headline"]
+
+
+def test_query_endpoint_accepts_session_id(monkeypatch, tmp_path: Path) -> None:
+    pytest = __import__("pytest")
+    pytest.importorskip("rasterio")
+    import backend.api.routes as routes_mod
+
+    monkeypatch.setattr(routes_mod.settings, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(routes_mod.settings, "ARTIFACT_DIR", tmp_path / "artifacts")
+    (tmp_path / "uploads").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+
+    from app.services.models.base import VLMResult
+    monkeypatch.setattr(
+        "app.services.models.base.LocalVisionLanguageClient.generate",
+        lambda self, prompt, **kwargs: VLMResult(
+            text=f"Domain answer for: {prompt}",
+            confidence=0.92,
+            params={"backend": "ollama", "model": "llava"},
+        ),
+    )
+
+    async def _run():
+        return await routes_mod.query_pipeline(
+            query="Explain SAR backscatter coefficient",
+            files=None,
+            session_id="session-xyz-789",
+            db=None,
+        )
+
+    envelope = asyncio.run(_run())
+    payload = envelope.model_dump()
+    assert payload["status"] == "ok"
+    assert payload["task_type"] == "domain_knowledge_qa"
+
+
+def test_query_endpoint_unexpected_exception_returns_500_with_detail(monkeypatch, tmp_path: Path) -> None:
+    pytest = __import__("pytest")
+    from fastapi import HTTPException
+    import backend.api.routes as routes_mod
+
+    class _FailingController:
+        def __init__(self, db=None) -> None:
+            self.db = db
+
+        def execute_workflow(self, *args, **kwargs):
+            raise RuntimeError("CRITICAL_INTERNAL_MODEL_FAILURE")
+
+    monkeypatch.setattr(routes_mod, "SatQueryController", _FailingController)
+    monkeypatch.setattr(routes_mod.settings, "UPLOAD_DIR", tmp_path / "uploads")
+    (tmp_path / "uploads").mkdir(parents=True, exist_ok=True)
+
+    async def _run():
+        return await routes_mod.query_pipeline(
+            query="Detect flooding in Kerala",
+            files=None,
+            db=None,
+        )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(_run())
+
+    assert exc_info.value.status_code == 500
+    assert "CRITICAL_INTERNAL_MODEL_FAILURE" in exc_info.value.detail
+
+
+def test_query_endpoint_empty_files_list_default(monkeypatch, tmp_path: Path) -> None:
+    pytest = __import__("pytest")
+    pytest.importorskip("rasterio")
+    import backend.api.routes as routes_mod
+
+    monkeypatch.setattr(routes_mod.settings, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(routes_mod.settings, "ARTIFACT_DIR", tmp_path / "artifacts")
+    (tmp_path / "uploads").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+
+    from app.services.models.base import VLMResult
+    monkeypatch.setattr(
+        "app.services.models.base.LocalVisionLanguageClient.generate",
+        lambda self, prompt, **kwargs: VLMResult(
+            text=f"Spatial resolution analysis for: {prompt}",
+            confidence=0.92,
+            params={"backend": "ollama", "model": "llava"},
+        ),
+    )
+
+    async def _run():
+        return await routes_mod.query_pipeline(
+            query="Explain spatial resolution in optical satellites",
+            files=[],
+            db=None,
+        )
+
+    envelope = asyncio.run(_run())
+    payload = envelope.model_dump()
+    assert payload["status"] == "ok"
+    assert payload["task_type"] == "domain_knowledge_qa"
+
+
+

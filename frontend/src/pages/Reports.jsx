@@ -20,31 +20,38 @@ import AnalysisDetailsPanel from "../components/reports/AnalysisDetailsPanel";
 import ReportPreviewModal from "../components/reports/ReportPreviewModal";
 import EmptyHistoryState from "../components/reports/EmptyHistoryState";
 import StatusBar from "../components/reports/StatusBar";
+import { useAnalysisHistory } from "../context/AnalysisHistoryContext";
 
 const ITEMS_PER_PAGE = 8;
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 function normalizeAnalyses(payload) {
-  const records = Array.isArray(payload) ? payload : payload?.analyses || payload?.items || [];
-  return records.map((record) => ({
-    ...record,
-    id: record.id || record.analysis_id || record.report_id || `analysis-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    title: record.title || record.name || record.query || "Satellite Analysis",
-    location: record.location || record.area || "Unknown area",
-    type: record.type || record.analysis_type || "Scene Description",
-    category: record.category || "SINGLE IMAGE",
-    status: record.status || "Completed",
-    confidence: Number(record.confidence ?? record.confidence_score ?? 0),
-    isSaved: Boolean(record.isSaved ?? record.is_saved),
-    date: record.date || record.created_at || "--",
-    datetimeStr: record.datetimeStr || record.created_at || "--",
-    summary: record.summary || record.answer || "",
-    userQuery: record.userQuery || record.query || "",
-  }));
+  const records = Array.isArray(payload) ? payload : payload?.analyses || payload?.items || payload?.sessions || [];
+  return records.map((record) => {
+    const rawAnalysis = record.analysisData || record;
+    return {
+      ...record,
+      id: record.id || record.analysis_id || record.report_id || `analysis-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      title: record.title || record.name || record.query || (rawAnalysis?.headline) || "Satellite Analysis",
+      location: record.location || (rawAnalysis?.location) || record.area || "Geospatial AOI (EPSG:4326)",
+      type: record.type || record.analysis_type || (rawAnalysis?.detectedTask) || "Scene Description",
+      category: record.category || ((record.type || rawAnalysis?.detectedTask || "").toLowerCase().includes("change") ? "CHANGE DETECTION" : (record.type || rawAnalysis?.detectedTask || "").toLowerCase().includes("sar") ? "OPTICAL + SAR" : "SINGLE IMAGE"),
+      status: record.status || "Completed",
+      confidence: Number(record.confidence ?? record.confidence_score ?? rawAnalysis?.confidence ?? 90),
+      isSaved: Boolean(record.isSaved ?? record.is_saved),
+      date: record.date || record.created_at || "--",
+      datetimeStr: record.datetimeStr || record.created_at || "--",
+      summary: record.summary || record.answer || rawAnalysis?.answer || "",
+      userQuery: record.userQuery || record.query || "",
+      geojson: record.geojson || rawAnalysis?.geojson || null,
+      analysisData: rawAnalysis,
+    };
+  });
 }
 
 export default function Reports() {
   const navigate = useNavigate();
+  const { selectSession } = useAnalysisHistory();
   const [analyses, setAnalyses] = useState([]);
   
   const [selectedAnalysis, setSelectedAnalysis] = useState(null);
@@ -339,7 +346,14 @@ export default function Reports() {
   };
 
   const handleOpenWorkspace = (analysis) => {
-    navigate("/workspace", { state: { selectedAnalysis: analysis } });
+    if (analysis?.id) {
+      selectSession(analysis.id);
+    }
+    navigate("/workspace", {
+      state: {
+        selectedAnalysis: analysis?.analysisData || analysis,
+      },
+    });
   };
 
   return (

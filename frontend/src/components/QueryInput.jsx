@@ -33,9 +33,8 @@ export default function QueryInput({ query, onQueryChange, busy, onSubmit }) {
       </label>
       <div className="grid gap-3 md:grid-cols-3">
         <FileSlot
-          label="Optical GeoTIFF (required)"
+          label="Optical GeoTIFF (optional)"
           inputRef={opticalRef}
-          required
           onChange={(name) => setNames((s) => ({ ...s, optical: name }))}
           hint={names.optical}
         />
