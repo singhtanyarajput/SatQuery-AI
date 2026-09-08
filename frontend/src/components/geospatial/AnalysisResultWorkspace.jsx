@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Sparkles,
   CheckCircle2,
@@ -6,21 +6,26 @@ import {
   ChevronUp,
   Layers,
   Eye,
-  EyeOff,
   Maximize2,
   Download,
   RotateCcw,
   Send,
-  Info,
   MapPin,
   Cpu,
   ArrowRight,
   ShieldCheck,
-  Share2,
-  FileCheck,
-  Map as MapIcon,
+  User,
+  GitFork,
+  Target,
+  FileText,
+  Clock,
+  Scan,
+  Paperclip,
+  TrendingUp,
+  Search,
 } from "lucide-react";
 import MapViewer from "../MapViewer";
+import { useTheme } from "../../context/ThemeContext";
 
 export default function AnalysisResultWorkspace({
   analysisData,
@@ -28,10 +33,10 @@ export default function AnalysisResultWorkspace({
   attachedFiles,
   onResetToNewChat,
 }) {
-  const [activeView, setActiveView] = useState("map"); // 'map' | 'overlay' | 'original'
+  const { theme } = useTheme();
+  const [activeView, setActiveView] = useState("overlay"); // 'map' | 'overlay' | 'original'
   const [overlayOpacity, setOverlayOpacity] = useState(70);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isDetailsOpen, setIsDetailsOpen] = useState(true);
   const [isTraceOpen, setIsTraceOpen] = useState(true);
 
   // Follow-up conversation state
@@ -39,11 +44,91 @@ export default function AnalysisResultWorkspace({
   const [followUpMessages, setFollowUpMessages] = useState([]);
   const [isAnsweringFollowUp, setIsAnsweringFollowUp] = useState(false);
 
+  // Fixed viewport follow-up taskbar & suggestions popup state
+  const workspaceRootRef = useRef(null);
+  const composerRef = useRef(null);
+  const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false);
+  const [workspaceBounds, setWorkspaceBounds] = useState({ left: 0, width: 0 });
+
+  // Close popup when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (composerRef.current && !composerRef.current.contains(event.target)) {
+        setIsSuggestionsOpen(false);
+      }
+    };
+
+    if (isSuggestionsOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("touchstart", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [isSuggestionsOpen]);
+
+  // Keep fixed composer aligned and centered with main workspace
+  useEffect(() => {
+    const updateBounds = () => {
+      const mainEl = workspaceRootRef.current?.closest("main") || workspaceRootRef.current;
+      if (mainEl) {
+        const rect = mainEl.getBoundingClientRect();
+        setWorkspaceBounds({
+          left: rect.left,
+          width: rect.width,
+        });
+      }
+    };
+
+    updateBounds();
+    window.addEventListener("resize", updateBounds);
+
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => {
+        updateBounds();
+      });
+      const mainEl = workspaceRootRef.current?.closest("main");
+      if (mainEl) resizeObserver.observe(mainEl);
+      if (workspaceRootRef.current) resizeObserver.observe(workspaceRootRef.current);
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateBounds);
+      if (resizeObserver) resizeObserver.disconnect();
+    };
+  }, []);
+
+  const getSuggestionIcon = (text) => {
+    const lower = (text || "").toLowerCase();
+    if (lower.includes("change") || lower.includes("spatial") || lower.includes("feature")) {
+      return <TrendingUp className="w-4 h-4 text-cyan-500 dark:text-cyan-400 shrink-0" />;
+    }
+    if (lower.includes("download") || lower.includes("pdf") || lower.includes("report")) {
+      return <Download className="w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0" />;
+    }
+    if (lower.includes("inspect") || lower.includes("telemetry") || lower.includes("coordinate")) {
+      return <Search className="w-4 h-4 text-indigo-500 dark:text-indigo-400 shrink-0" />;
+    }
+    return <ArrowRight className="w-4 h-4 text-cyan-500 dark:text-cyan-400 shrink-0" />;
+  };
+
+  const displayQuery =
+    userQuery ||
+    analysisData?.userQuery ||
+    analysisData?.query ||
+    "what this image is about?";
+
   const handleSendFollowUp = (textToSend) => {
     const q = textToSend || followUpQuery;
     if (!q.trim()) return;
 
-    const userMsg = { role: "user", text: q, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+    const userMsg = {
+      role: "user",
+      text: q,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
     setFollowUpMessages((prev) => [...prev, userMsg]);
     setFollowUpQuery("");
     setIsAnsweringFollowUp(true);
@@ -68,7 +153,7 @@ export default function AnalysisResultWorkspace({
       const aiMsg = {
         role: "assistant",
         text: aiReply,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setFollowUpMessages((prev) => [...prev, aiMsg]);
       setIsAnsweringFollowUp(false);
@@ -77,50 +162,140 @@ export default function AnalysisResultWorkspace({
 
   const currentImage =
     activeView === "overlay"
-      ? (analysisData?.evidenceImage || analysisData?.baseImage || "/satellite/grounding.jpg")
-      : (analysisData?.baseImage || analysisData?.evidenceImage || "/satellite/water-optical.jpg");
+      ? analysisData?.evidenceImage || analysisData?.baseImage || "/satellite/grounding.jpg"
+      : analysisData?.baseImage || analysisData?.evidenceImage || "/satellite/water-optical.jpg";
 
   const downloadImage =
     activeView === "overlay"
-      ? (analysisData?.evidenceImage || analysisData?.baseImage || "/satellite/grounding.jpg")
-      : (analysisData?.baseImage || analysisData?.evidenceImage || "/satellite/water-optical.jpg");
+      ? analysisData?.evidenceImage || analysisData?.baseImage || "/satellite/grounding.jpg"
+      : analysisData?.baseImage || analysisData?.evidenceImage || "/satellite/water-optical.jpg";
+
+  // Resolve 4 Metric Cards (Confidence, Workflow, Features, ID Trace) directly above the map
+  const rawMetrics = Array.isArray(analysisData?.metrics) && analysisData.metrics.length > 0 ? analysisData.metrics : null;
+  const confidenceScore = analysisData?.confidence ?? 88;
+
+  const confidenceMetric = rawMetrics?.find((m) => m.label?.toLowerCase().includes("conf")) || rawMetrics?.[0] || {
+    label: "Confidence",
+    value: `${confidenceScore}%`,
+  };
+  const workflowMetric = rawMetrics?.find((m) => m.label?.toLowerCase().includes("work")) || rawMetrics?.[1] || {
+    label: "Workflow",
+    value: (analysisData?.detectedTask || "Single Image Vqa").slice(0, 20),
+  };
+  const featuresMetric = rawMetrics?.find((m) => m.label?.toLowerCase().includes("feat")) || rawMetrics?.[2] || {
+    label: "Features",
+    value: analysisData?.geojson_feature_count ? `${analysisData.geojson_feature_count} Polygons` : "1 Polygons",
+  };
+  const traceMetric = rawMetrics?.find((m) => m.label?.toLowerCase().includes("trace")) || rawMetrics?.[3] || {
+    label: "ID Trace",
+    value: analysisData?.traceId ? analysisData.traceId.replace("ISRO-SQ-", "") : "2026-8202B6",
+  };
+
+  const metricCards = [
+    {
+      label: "Confidence",
+      value: confidenceMetric.value,
+      icon: <ShieldCheck className="w-5 h-5 text-cyan-400" />,
+      isConfidence: true,
+      percent: parseInt(confidenceMetric.value) || confidenceScore || 88,
+    },
+    {
+      label: "Workflow",
+      value: workflowMetric.value,
+      icon: <GitFork className="w-5 h-5 text-cyan-400" />,
+    },
+    {
+      label: "Features",
+      value: featuresMetric.value,
+      icon: <Layers className="w-5 h-5 text-cyan-400" />,
+    },
+    {
+      label: "ID Trace",
+      value: traceMetric.value,
+      icon: <Scan className="w-5 h-5 text-cyan-400" />,
+    },
+  ];
+
+  const processedDateStr =
+    analysisData?.processedOn ||
+    analysisData?.datetimeStr ||
+    (analysisData?.timestamp
+      ? `${new Date(analysisData.timestamp).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}, ${new Date(analysisData.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+      : `${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}, ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
 
   return (
-    <div className="w-full flex flex-col gap-4 animate-in fade-in duration-300">
-      {/* Top Breadcrumb & Actions Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-200/80 dark:border-dark-border">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/80 text-emerald-700 dark:text-emerald-300 text-xs font-semibold">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Analysis Complete</span>
-          </div>
-          <span className="text-xs text-slate-400 dark:text-slate-500">•</span>
-          <span className="text-xs font-medium text-slate-600 dark:text-slate-300 truncate max-w-xs sm:max-w-md">
-            Query: “{userQuery || "Automated Earth Observation Analysis"}”
-          </span>
-        </div>
-
+    <div ref={workspaceRootRef} className="w-full flex flex-col gap-5 animate-in fade-in duration-300 pb-32">
+      {/* ============================================================ */}
+      {/* 1. TOP: COMPLETED USER QUERY (ChatGPT / Gemini style)        */}
+      {/* ============================================================ */}
+      <div className="flex flex-wrap items-start justify-between gap-3 w-full pb-1">
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onResetToNewChat}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-card hover:bg-slate-50 dark:hover:bg-dark-hover text-xs font-semibold text-slate-700 dark:text-slate-200 shadow-2xs transition"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-card hover:bg-slate-50 dark:hover:bg-dark-hover text-xs font-semibold text-slate-700 dark:text-slate-200 shadow-2xs transition cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
             <span>New Analysis</span>
           </button>
         </div>
+
+        {/* User Query Message Bubble */}
+        <div className="flex items-start gap-3 max-w-xl ml-auto">
+          <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white shrink-0 shadow-md">
+            <User className="w-5 h-5 text-white" />
+          </div>
+          <div className="rounded-2xl bg-white dark:bg-slate-800/90 border border-slate-200/90 dark:border-slate-700/60 px-4 py-2.5 shadow-sm text-left">
+            <div className="text-[11px] font-semibold text-slate-400 dark:text-slate-400">
+              You
+            </div>
+            <div className="text-sm font-medium text-slate-900 dark:text-slate-100 mt-0.5 select-text">
+              {displayQuery}
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Main Two-Panel Workspace (Left: Imagery & Visual Evidence, Right: SatQuery AI Response) */}
+      {/* ============================================================ */}
+      {/* 2 & 3 & 4. MAIN GRID: LEFT (Metrics + Map) & RIGHT (Details)  */}
+      {/* ============================================================ */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        
         {/* ============================================================ */}
-        {/* LEFT PANEL: SATELLITE IMAGERY & VISUAL EVIDENCE (7 cols) */}
+        {/* LEFT COLUMN: METRIC CARDS ABOVE SATELLITE MAP (7 cols)       */}
         {/* ============================================================ */}
         <div className="lg:col-span-7 flex flex-col gap-3">
+          {/* 2. Four Metric Cards Above the Map */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {metricCards.map((m, idx) => (
+              <div
+                key={idx}
+                className="p-3 rounded-xl border border-slate-200/90 dark:border-dark-border bg-white dark:bg-dark-card shadow-2xs flex items-center gap-3"
+              >
+                <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200/60 dark:border-blue-800/50 flex items-center justify-center shrink-0">
+                  {m.icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] font-semibold text-slate-400 dark:text-slate-400">
+                    {m.label}
+                  </div>
+                  <div className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-tight mt-0.5 truncate">
+                    {m.value}
+                  </div>
+                  {m.isConfidence && (
+                    <div className="w-full bg-slate-100 dark:bg-slate-700/60 h-1.5 rounded-full overflow-hidden mt-1.5">
+                      <div
+                        className="bg-cyan-500 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.max(0, m.percent))}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 3. Satellite Map Container Directly Below Metric Cards */}
           <div className="relative rounded-2xl border border-slate-200/90 dark:border-dark-border bg-slate-900 overflow-hidden shadow-sm">
-            
             {/* Imagery / Map Viewer Container */}
             <div className="relative w-full aspect-[16/10] sm:aspect-[16/10] bg-slate-950 flex items-center justify-center overflow-hidden">
               {activeView === "map" ? (
@@ -174,7 +349,7 @@ export default function AnalysisResultWorkspace({
               )}
             </div>
 
-            {/* Viewer Controls Toolbar (Requirement 16) */}
+            {/* Viewer Controls Toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-white dark:bg-dark-card border-t border-slate-200/80 dark:border-dark-border">
               {/* Evidence Layer Toggle & Opacity Slider */}
               <div className="flex items-center gap-3">
@@ -252,241 +427,342 @@ export default function AnalysisResultWorkspace({
               </div>
             </div>
           </div>
-
-          {/* Key Metrics Strip */}
-          {Array.isArray(analysisData?.metrics) && analysisData.metrics.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              {analysisData.metrics.map((m, idx) => (
-                <div
-                  key={idx}
-                  className="p-2.5 rounded-xl border border-slate-200/90 dark:border-dark-border bg-white dark:bg-dark-card shadow-2xs"
-                >
-                  <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500">
-                    {m?.label || "Metric"}
-                  </div>
-                  <div className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">
-                    {m?.value || "—"}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* ============================================================ */}
-        {/* RIGHT PANEL: SATQUERY AI RESPONSE & DETAILS (5 cols) */}
+        {/* 4. RIGHT PANEL: SATQUERY AI & ANALYSIS DETAILS AT TOP (5 col) */}
         {/* ============================================================ */}
         <div className="lg:col-span-5 flex flex-col gap-4">
-          
-          {/* Main AI Response Card */}
+          {/* Main Card: SatQuery AI Brand + Analysis & Details at Top */}
           <div className="rounded-2xl border border-slate-200/90 dark:border-dark-border bg-white dark:bg-dark-card p-5 shadow-sm space-y-4">
-            
             {/* Header with SatQuery AI Brand & Confidence */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-brand-600 to-cyan-500 text-white shadow-xs">
-                  <Sparkles className="w-4 h-4" />
-                </div>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-dark-border/60">
+              <div className="flex items-center gap-2.5">
+                <img
+                  src={theme === "dark" ? "/logo-dark.png" : "/logo-light.png"}
+                  alt="SatQuery AI Official Logo"
+                  className="h-8 w-8 object-contain rounded-lg shadow-2xs"
+                />
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-none">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
                     SatQuery AI
                   </h3>
-                  <span className="text-[10px] text-slate-400">Autonomous EO Specialist</span>
+                  <span className="text-[10px] text-slate-400 leading-tight block">Autonomous EO Specialist</span>
                 </div>
               </div>
 
               <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-bold font-mono">
-                Confidence: {analysisData?.confidence ?? 90}%
+                Confidence: {confidenceScore}%
               </div>
             </div>
 
-            {/* Headline */}
-            <h4 className="text-base font-bold text-slate-950 dark:text-white leading-snug">
-              {analysisData?.headline || "Analysis Complete"}
-            </h4>
+            {/* Analysis & Details Section */}
+            <div>
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white mb-3">
+                Analysis &amp; Details
+              </h4>
 
-            {/* Natural-Language Answer */}
-            <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
-              {analysisData?.answer || "Autonomous satellite intelligence analysis completed."}
-            </p>
+              {/* Optional brief descriptive summary if provided */}
+              {analysisData?.description && (
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-4">
+                  {analysisData.description}
+                </p>
+              )}
 
-            {/* Key Findings List */}
-            {Array.isArray(analysisData?.keyFindings) && analysisData.keyFindings.length > 0 && (
-              <div className="space-y-1.5 pt-1">
-                <div className="text-[11px] font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
-                  Key Findings
+              {/* Metadata Key-Value List */}
+              <div className="space-y-2.5 text-xs">
+                <div className="flex items-center justify-between py-1 border-b border-slate-100 dark:border-dark-border/40">
+                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                    <Target className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Detected task:</span>
+                  </div>
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    {analysisData?.detectedTask || "Single Image Vqa"}
+                  </span>
                 </div>
-                <ul className="space-y-1">
-                  {analysisData.keyFindings.map((finding, idx) => (
-                    <li key={idx} className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300">
-                      <span className="text-brand-500 font-bold mt-0.5">•</span>
-                      <span>{finding}</span>
-                    </li>
-                  ))}
-                </ul>
+
+                <div className="flex items-center justify-between py-1 border-b border-slate-100 dark:border-dark-border/40">
+                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                    <Layers className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Input:</span>
+                  </div>
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    {analysisData?.inputModality || "Image-Text, RGB"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-1 border-b border-slate-100 dark:border-dark-border/40">
+                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                    <GitFork className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Specialist workflow:</span>
+                  </div>
+                  <span className="font-semibold text-slate-900 dark:text-white font-mono text-[11px]">
+                    {analysisData?.selectedWorkflow || "bigearthnet-encoder + llava"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-1 border-b border-slate-100 dark:border-dark-border/40">
+                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                    <Eye className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Visual evidence:</span>
+                  </div>
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    {analysisData?.evidenceType || "Single Image Vqa Mask"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-1 border-b border-slate-100 dark:border-dark-border/40">
+                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                    <Cpu className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Model:</span>
+                  </div>
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    {analysisData?.model || "SatQuery AI (Autonomous EO Specialist)"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-1">
+                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                    <Clock className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Processed on:</span>
+                  </div>
+                  <span className="font-medium text-slate-700 dark:text-slate-300">
+                    {processedDateStr}
+                  </span>
+                </div>
               </div>
-            )}
-
-            {/* Important Autonomous Routing Communication Banner (Requirement 10 & 19) */}
-            <div className="p-3 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/60 flex items-center gap-2.5">
-              <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-              <p className="text-xs font-semibold text-blue-900 dark:text-blue-200">
-                Analysis automatically selected by SatQuery AI.
-              </p>
-            </div>
-
-            {/* Section 12: Collapsible "Analysis details" */}
-            <div className="border-t border-slate-100 dark:border-dark-border/80 pt-3">
-              <button
-                type="button"
-                onClick={() => setIsDetailsOpen(!isDetailsOpen)}
-                className="w-full flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white hover:text-brand-600 transition"
-              >
-                <div className="flex items-center gap-1.5">
-                  <Info className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Analysis details</span>
-                </div>
-                {isDetailsOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-              </button>
-
-              {isDetailsOpen && (
-                <div className="mt-3 p-3 rounded-xl bg-slate-50 dark:bg-dark-hover/40 border border-slate-200/60 dark:border-dark-border text-xs space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 dark:text-slate-400">Detected task:</span>
-                    <span className="font-semibold text-slate-900 dark:text-white">{analysisData?.detectedTask || "Geospatial Analysis"}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 dark:text-slate-400">Input:</span>
-                    <span className="font-semibold text-slate-900 dark:text-white">{analysisData?.inputModality || "Optical RGB"}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 dark:text-slate-400">Specialist workflow:</span>
-                    <span className="font-semibold text-slate-900 dark:text-white">{analysisData?.selectedWorkflow || "RS-Grounding-V3"}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 dark:text-slate-400">Visual evidence:</span>
-                    <span className="font-semibold text-slate-900 dark:text-white">{analysisData?.evidenceType || "Visual Evidence Mask"}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 dark:text-slate-400">Confidence:</span>
-                    <span className="font-semibold text-emerald-600 dark:text-emerald-400 font-mono">{analysisData?.confidence ?? 90}%</span>
-                  </div>
-                  <div className="pt-1.5 border-t border-slate-200/60 dark:border-dark-border/60 text-[10px] text-slate-400 italic">
-                    SatQuery selected these parameters automatically based on natural language inference and sensor metadata.
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Section 13: Collapsible "How SatQuery analyzed this" */}
-            <div className="border-t border-slate-100 dark:border-dark-border/80 pt-3">
-              <button
-                type="button"
-                onClick={() => setIsTraceOpen(!isTraceOpen)}
-                className="w-full flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white hover:text-brand-600 transition"
-              >
-                <div className="flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>How SatQuery analyzed this</span>
-                </div>
-                {isTraceOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-              </button>
-
-              {isTraceOpen && (
-                <div className="mt-3 p-3 rounded-xl bg-slate-50 dark:bg-dark-hover/40 border border-slate-200/60 dark:border-dark-border text-xs space-y-1.5">
-                  {[
-                    "Query understood",
-                    "Input validated",
-                    "Analysis workflow selected",
-                    "Specialist model executed",
-                    "Visual evidence generated",
-                    "Answer produced",
-                  ].map((traceStep, idx) => (
-                    <div key={idx} className="flex items-center justify-between text-slate-700 dark:text-slate-300">
-                      <span>{traceStep}</span>
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
 
-          {/* Follow-up Messages History */}
-          {followUpMessages.length > 0 && (
-            <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
-              {followUpMessages.map((msg, idx) => (
-                <div
-                  key={idx}
-                  className={`p-3 rounded-xl text-xs leading-relaxed ${
-                    msg.role === "user"
-                      ? "bg-blue-50 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800 ml-4 text-blue-900 dark:text-blue-200"
-                      : "bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border mr-4 text-slate-800 dark:text-slate-200"
-                  }`}
-                >
-                  <div className="font-semibold mb-0.5 text-[10px] text-slate-400 uppercase">
-                    {msg.role === "user" ? "You" : "SatQuery AI"} • {msg.timestamp}
+          {/* How SatQuery analyzed this (Exchanged into Right Column) */}
+          <div className="rounded-2xl border border-slate-200/90 dark:border-dark-border bg-white dark:bg-dark-card p-4 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setIsTraceOpen(!isTraceOpen)}
+              className="w-full flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white hover:text-brand-600 transition cursor-pointer"
+            >
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                <span className="text-xs font-bold">How SatQuery analyzed this</span>
+              </div>
+              {isTraceOpen ? (
+                <ChevronUp className="w-4 h-4 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-slate-400" />
+              )}
+            </button>
+
+            {isTraceOpen && (
+              <div className="mt-3 p-3 rounded-xl bg-slate-50 dark:bg-dark-hover/40 border border-slate-200/60 dark:border-dark-border text-xs space-y-2">
+                {[
+                  "Query understood",
+                  "Input validated",
+                  "Analysis workflow selected",
+                  "Specialist model executed",
+                  "Visual evidence generated",
+                  "Answer produced",
+                ].map((traceStep, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-slate-700 dark:text-slate-300">
+                    <span>{traceStep}</span>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                   </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ============================================================ */}
+      {/* 5. BELOW THE MAP: EXISTING ANALYSIS RESULT & KEY FINDINGS    */}
+      {/* ============================================================ */}
+      <div className="rounded-2xl border border-slate-200/90 dark:border-dark-border bg-white dark:bg-dark-card p-5 shadow-sm space-y-4">
+        {/* Title & Query Subtitle */}
+        <div className="flex items-start gap-3">
+          <div className="p-2.5 rounded-xl bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0">
+            <FileText className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base font-bold text-slate-950 dark:text-white leading-snug">
+              {analysisData?.headline || "Analysis Complete"}
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              For query: “{displayQuery}”
+            </p>
+          </div>
+        </div>
+
+        {/* Natural-Language Answer / Result Text */}
+        <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
+          {analysisData?.answer || "Autonomous satellite intelligence analysis completed."}
+        </p>
+
+        {/* Key Findings List */}
+        {Array.isArray(analysisData?.keyFindings) && analysisData.keyFindings.length > 0 && (
+          <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-dark-border/60">
+            <div className="text-[11px] font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+              Key Findings
+            </div>
+            <ul className="space-y-1.5">
+              {analysisData.keyFindings.map((finding, idx) => (
+                <li key={idx} className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300">
+                  <span className="text-brand-500 dark:text-cyan-400 font-bold mt-0.5">•</span>
+                  <span>{finding}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Autonomous Routing Communication Banner */}
+        <div className="p-3 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/60 flex items-center gap-2.5">
+          <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+          <p className="text-xs font-semibold text-blue-900 dark:text-blue-200">
+            Analysis automatically selected by SatQuery AI.
+          </p>
+        </div>
+
+      </div>
+
+      {/* ============================================================ */}
+      {/* 6. FOLLOW-UP MESSAGES IN MAIN PAGE FLOW (ChatGPT/Gemini style) */}
+      {/* ============================================================ */}
+      {followUpMessages.map((msg, idx) => (
+        <div key={idx} className="w-full">
+          {msg.role === "user" ? (
+            /* User Follow-up Message Bubble */
+            <div className="flex items-start gap-3 max-w-2xl ml-auto">
+              <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white shrink-0 shadow-md">
+                <User className="w-5 h-5 text-white" />
+              </div>
+              <div className="rounded-2xl bg-white dark:bg-slate-800/90 border border-slate-200/90 dark:border-slate-700/60 px-4 py-2.5 shadow-sm text-left">
+                <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-400 dark:text-slate-400">
+                  <span>You</span>
+                  {msg.timestamp && <span>• {msg.timestamp}</span>}
+                </div>
+                <div className="text-sm font-medium text-slate-900 dark:text-slate-100 mt-0.5 select-text">
                   {msg.text}
                 </div>
-              ))}
-              {isAnsweringFollowUp && (
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-dark-card border border-slate-200 dark:border-dark-border text-xs text-slate-500 flex items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5 text-brand-600 animate-spin" />
-                  <span>SatQuery is generating response...</span>
+              </div>
+            </div>
+          ) : (
+            /* SatQuery AI Response Card */
+            <div className="flex items-start gap-3 max-w-3xl mr-auto">
+              <img
+                src={theme === "dark" ? "/logo-dark.png" : "/logo-light.png"}
+                alt="SatQuery AI"
+                className="h-8 w-8 sm:h-9 sm:w-9 object-contain rounded-xl shadow-2xs shrink-0 mt-0.5"
+              />
+              <div className="rounded-2xl border border-slate-200/90 dark:border-dark-border bg-white dark:bg-dark-card p-4 sm:p-5 shadow-sm text-left flex-1 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-900 dark:text-white">SatQuery AI</span>
+                  {msg.timestamp && <span className="text-[10px] text-slate-400">• {msg.timestamp}</span>}
                 </div>
-              )}
+                <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 leading-relaxed select-text">
+                  {msg.text}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {isAnsweringFollowUp && (
+        <div className="flex items-start gap-3 max-w-xl mr-auto">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-brand-600 to-cyan-500 text-white shadow-xs shrink-0 mt-0.5">
+            <Sparkles className="w-5 h-5 animate-spin" />
+          </div>
+          <div className="rounded-2xl border border-slate-200/90 dark:border-dark-border bg-white dark:bg-dark-card px-4 py-3 shadow-sm flex items-center gap-2.5 text-xs text-slate-500 dark:text-slate-400">
+            <Sparkles className="w-3.5 h-3.5 text-brand-600 dark:text-cyan-400 animate-spin" />
+            <span>SatQuery AI is generating response...</span>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* 7. VIEWPORT-FIXED FOLLOW-UP COMPOSER (ChatGPT / Gemini style)*/}
+      {/* ============================================================ */}
+      <div
+        className="fixed bottom-6 z-30 flex justify-center pointer-events-none transition-all duration-150 px-4 inset-x-0"
+        style={{
+          left: workspaceBounds.width > 0 ? `${workspaceBounds.left}px` : undefined,
+          width: workspaceBounds.width > 0 ? `${workspaceBounds.width}px` : undefined,
+        }}
+      >
+        <div
+          ref={composerRef}
+          className="w-full max-w-[92%] sm:max-w-[80%] md:max-w-[62%] min-w-[300px] pointer-events-auto relative"
+        >
+          {/* Suggested Follow-ups Popup (Opens UPWARD, closed by default) */}
+          {isSuggestionsOpen && analysisData?.suggestedFollowUps && analysisData.suggestedFollowUps.length > 0 && (
+            <div className="absolute bottom-full mb-3 left-0 right-0 z-50 rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white/95 dark:bg-[#0c1322]/95 backdrop-blur-xl shadow-2xl p-2.5 space-y-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 px-2.5 pt-1 pb-1 uppercase tracking-wider">
+                Suggested follow-ups
+              </div>
+              <div className="space-y-1">
+                {analysisData.suggestedFollowUps.map((suggestion, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSendFollowUp(suggestion);
+                      setIsSuggestionsOpen(false);
+                    }}
+                    className="w-full px-3 py-2.5 rounded-xl border border-transparent hover:border-slate-200/80 dark:hover:border-slate-700/60 bg-slate-50/60 hover:bg-blue-50/70 dark:bg-slate-800/30 dark:hover:bg-slate-800/80 text-left text-xs text-slate-700 dark:text-slate-200 hover:text-brand-600 dark:hover:text-cyan-300 flex items-center gap-3 group transition cursor-pointer"
+                  >
+                    {getSuggestionIcon(suggestion)}
+                    <span className="flex-1 truncate">{suggestion}</span>
+                    <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 dark:text-slate-500 shrink-0" />
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* Follow-up Query Composer (ChatGPT / Gemini style) */}
-          <div className="rounded-2xl border border-slate-200/90 dark:border-dark-border bg-white dark:bg-dark-card p-3 shadow-sm space-y-2">
-            {/* Suggested Follow-up Chips */}
-            {analysisData.suggestedFollowUps && (
-              <div className="space-y-1">
-                <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                  Suggested Follow-ups
-                </div>
-                <div className="flex flex-col gap-1">
-                  {analysisData.suggestedFollowUps.map((suggestion, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => handleSendFollowUp(suggestion)}
-                      className="text-left text-xs text-brand-600 dark:text-brand-400 hover:text-brand-800 dark:hover:text-brand-200 hover:underline flex items-center justify-between group py-0.5"
-                    >
-                      <span className="truncate">“{suggestion}”</span>
-                      <ArrowRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Input Row */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSendFollowUp();
+          {/* Follow-up Input Bar */}
+          <form
+            onClick={() => setIsSuggestionsOpen(true)}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!followUpQuery.trim() || isAnsweringFollowUp) return;
+              handleSendFollowUp();
+              setIsSuggestionsOpen(false);
+            }}
+            className="flex items-center gap-2.5 px-4 py-2.5 rounded-full border border-slate-200/90 dark:border-slate-700/80 bg-white/95 dark:bg-[#0c1322]/95 shadow-xl shadow-slate-900/10 dark:shadow-2xl backdrop-blur-xl transition-all focus-within:border-brand-500/70 dark:focus-within:border-cyan-500/70 focus-within:ring-2 focus-within:ring-brand-500/20 dark:focus-within:ring-cyan-500/20"
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsSuggestionsOpen((prev) => !prev);
               }}
-              className="flex items-center gap-2 pt-1 border-t border-slate-100 dark:border-dark-border/60"
+              className="p-1 text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 transition cursor-pointer shrink-0"
+              title="Suggested follow-ups"
+              aria-label="Suggested follow-ups"
             >
-              <input
-                type="text"
-                value={followUpQuery}
-                onChange={(e) => setFollowUpQuery(e.target.value)}
-                placeholder="Ask a follow-up about this imagery..."
-                className="flex-1 bg-transparent text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
-              />
-              <button
-                type="submit"
-                disabled={!followUpQuery.trim() || isAnsweringFollowUp}
-                className="p-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white disabled:opacity-40 transition"
-              >
-                <Send className="w-3.5 h-3.5" />
-              </button>
-            </form>
-          </div>
+              <Paperclip className="w-4 h-4" />
+            </button>
+            <input
+              type="text"
+              value={followUpQuery}
+              onFocus={() => setIsSuggestionsOpen(true)}
+              onClick={() => setIsSuggestionsOpen(true)}
+              onChange={(e) => setFollowUpQuery(e.target.value)}
+              placeholder="Ask a follow-up..."
+              className="flex-1 bg-transparent text-xs sm:text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!followUpQuery.trim() || isAnsweringFollowUp}
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-30 disabled:hover:bg-brand-600 transition cursor-pointer flex items-center justify-center shrink-0 shadow-sm"
+              title="Send follow-up"
+              aria-label="Send follow-up"
+            >
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          </form>
         </div>
       </div>
 
@@ -497,7 +773,7 @@ export default function AnalysisResultWorkspace({
             <button
               type="button"
               onClick={() => setIsFullscreen(false)}
-              className="absolute top-2 right-2 p-2 rounded-full bg-slate-800/80 text-white hover:bg-slate-700 transition"
+              className="absolute top-2 right-2 p-2 rounded-full bg-slate-800/80 text-white hover:bg-slate-700 transition cursor-pointer"
             >
               ✕
             </button>

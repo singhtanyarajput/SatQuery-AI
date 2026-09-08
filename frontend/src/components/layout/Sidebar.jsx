@@ -21,8 +21,10 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { useAnalysisHistory } from "../../context/AnalysisHistoryContext";
+import { useTheme } from "../../context/ThemeContext";
 
 export default function Sidebar({ isCollapsed, onToggle, onClose }) {
+  const { theme } = useTheme();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSystemModal, setShowSystemModal] = useState(false);
   const profileMenuRef = useRef(null);
@@ -75,43 +77,29 @@ export default function Sidebar({ isCollapsed, onToggle, onClose }) {
             <button
               type="button"
               onClick={onToggle}
-              className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-brand-600 to-cyan-500 shadow-md shadow-brand-500/20 text-white transition-transform hover:scale-105 cursor-pointer"
-              title="Open sidebar"
-              aria-label="Open sidebar"
+              className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl p-0.5 transition-transform hover:scale-105 cursor-pointer focus:outline-none"
+              title="Expand sidebar"
+              aria-label="Expand sidebar"
             >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-5 w-5"
-              >
-                <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
-              </svg>
+              <img
+                src={theme === "dark" ? "/logo-dark.png" : "/logo-light.png"}
+                alt="SatQuery AI Logo"
+                className="h-full w-full object-contain rounded-lg shadow-xs"
+              />
             </button>
           ) : (
             <>
-              <NavLink to="/workspace" className="flex items-center space-x-2.5 overflow-hidden">
-                <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-brand-600 to-cyan-500 shadow-md shadow-brand-500/20 text-white">
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-4.5 w-4.5"
-                  >
-                    <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
-                  </svg>
-                </div>
+              <NavLink to="/workspace" className="flex items-center space-x-2.5 overflow-hidden group">
+                <img
+                  src={theme === "dark" ? "/logo-dark.png" : "/logo-light.png"}
+                  alt="SatQuery AI Official Logo"
+                  className="h-10 w-10 sm:h-11 sm:w-11 object-contain rounded-xl group-hover:scale-105 transition-transform shadow-xs flex-shrink-0"
+                />
                 <div className="flex flex-col">
                   <span className="text-sm font-bold tracking-tight text-slate-900 dark:text-white leading-tight">
                     SatQuery AI
                   </span>
-                  <span className="text-[10px] font-medium text-slate-400 leading-tight">
+                  <span className="text-[10px] font-semibold text-cyan-600 dark:text-cyan-400 tracking-wide uppercase leading-tight">
                     Satellite Intelligence
                   </span>
                 </div>

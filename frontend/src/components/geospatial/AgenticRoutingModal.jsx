@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { CheckCircle2, Loader2, Sparkles } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
+import { useTheme } from "../../context/ThemeContext";
 
 export default function AgenticRoutingModal({ onComplete }) {
+  const { theme } = useTheme();
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
   const steps = [
@@ -25,22 +27,26 @@ export default function AgenticRoutingModal({ onComplete }) {
           return prev;
         }
       });
-    }, 450);
+    }, 550);
 
     return () => clearInterval(timer);
   }, [onComplete, steps.length]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-in fade-in duration-200">
       <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-card shadow-2xl p-6 relative overflow-hidden">
         
         {/* Subtle Top Accent Glow */}
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-cyan-400 to-indigo-500" />
 
-        {/* Header with Pulse Icon */}
+        {/* Header with Logo */}
         <div className="flex items-center space-x-3 mb-5">
-          <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-brand-600 dark:text-brand-400">
-            <Sparkles className="w-5 h-5 animate-pulse" />
+          <div className="relative flex items-center justify-center w-10 h-10 rounded-xl overflow-hidden shadow-xs">
+            <img
+              src={theme === "dark" ? "/logo-dark.png" : "/logo-light.png"}
+              alt="SatQuery AI"
+              className="w-full h-full object-contain rounded-xl"
+            />
             <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />

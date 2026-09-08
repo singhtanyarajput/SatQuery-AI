@@ -170,6 +170,11 @@ function formatBackendResponse(payload, userQuery, attachedFiles) {
     ? `Bi-Temporal Flood Inundation Delineation — ${audit.trace_id || "Analysis Complete"}`
     : `${formattedTask} — ${audit.trace_id || "Complete"}`);
 
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const processedOn = `${dateStr}, ${timeStr}`;
+
   const analysisObject = {
     id: audit.trace_id || `SAT-${Date.now()}`,
     traceId: audit.trace_id,
@@ -187,6 +192,9 @@ function formatBackendResponse(payload, userQuery, attachedFiles) {
     metrics,
     suggestedFollowUps,
     geojson: payload.geojson || null,
+    model: "SatQuery AI (Autonomous EO Specialist)",
+    processedOn,
+    userQuery: userQuery || "",
   };
 
   try {
