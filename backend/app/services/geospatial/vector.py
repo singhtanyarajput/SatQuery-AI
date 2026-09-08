@@ -363,15 +363,17 @@ def standardize_feature_collection(
         confidences.append(conf)
         feat_id = feat.get("id") or props.get("id") or f"feat-{idx:03d}"
 
-        # Standardize class: 'infrastructure', 'flood', or 'sar_anomaly'
+        # Standardize class: 'infrastructure', 'flood', 'sar_anomaly', or 'water'
         prop_class = props.get("class")
         if not prop_class:
             lbl = (props.get("label") or "").lower()
             cat = (props.get("category") or props.get("feature_type") or "").lower()
             if task == "change_detection" or "flood" in lbl or "inundat" in lbl or "flood" in cat:
                 prop_class = "flood"
-            elif task == "cross_modal" and (props.get("source") == "sar" or "sar" in lbl or "water" in lbl or "anomaly" in cat):
+            elif task == "cross_modal" and (props.get("source") == "sar" or "sar" in lbl or "anomaly" in cat):
                 prop_class = "sar_anomaly"
+            elif "water" in lbl or "water" in cat or "lake" in lbl or "river" in lbl:
+                prop_class = "water"
             else:
                 prop_class = "infrastructure"
 
@@ -456,8 +458,10 @@ def _instances_geoms_to_collection(
             cat = (inst.get("category") or default_category or "").lower()
             if task_type == "change_detection" or "flood" in lbl or "inundat" in lbl:
                 inst_class = "flood"
-            elif task_type == "cross_modal" and (inst.get("source") == "sar" or "sar" in lbl or "water" in lbl):
+            elif task_type == "cross_modal" and (inst.get("source") == "sar" or "sar" in lbl or "anomaly" in cat):
                 inst_class = "sar_anomaly"
+            elif "water" in lbl or "water" in cat or "lake" in lbl or "river" in lbl:
+                inst_class = "water"
             else:
                 inst_class = "infrastructure"
 

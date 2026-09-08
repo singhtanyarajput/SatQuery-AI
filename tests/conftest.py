@@ -32,8 +32,14 @@ def mock_vlm_for_unit_tests(monkeypatch: pytest.MonkeyPatch, request: pytest.Fix
         **kwargs: Any,
     ) -> VLMResult:
         ctx = dict(extra_context or {})
+        if ctx.get("is_directional") and ctx.get("directional_verdict"):
+            mock_text = str(ctx["directional_verdict"])
+        elif ctx.get("direction_label") and ctx.get("is_directional"):
+            mock_text = f"{ctx['direction_label']} Analysis indicates surface alterations."
+        else:
+            mock_text = f"Satellite observation analysis: '{prompt.strip()[:80]}'. The Sentinel-1 SAR constellation confirms stable surface features."
         return VLMResult(
-            text=f"Satellite observation analysis: '{prompt.strip()[:80]}'. The Sentinel-1 SAR constellation confirms stable surface features.",
+            text=mock_text,
             confidence=0.92,
             params={"backend": "ollama", "model": "llava", "mocked": True, **ctx},
         )

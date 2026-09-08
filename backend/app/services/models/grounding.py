@@ -361,12 +361,13 @@ class TextGuidedGrounder:
 
         # Convert detected instances to standards-compliant GeoJSON FeatureCollection
         detected_label = instances[0]["label"] if instances else _extract_label_from_prompt(prompt)
+        detected_category = instances[0].get("category", "infrastructure") if instances else "infrastructure"
         geojson_data = instances_to_geojson(
             geotiff_path=image_path,
             instances=instances,
             default_label=detected_label,
             task_type="grounding",
-            category="infrastructure",
+            category=detected_category,
         )
 
         model_name = "mobilesam" if use_mobilesam else "sam-vit-b"
