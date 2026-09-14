@@ -550,6 +550,8 @@ async def query_pipeline(
                 "json": f"/api/v1/reports/{trace.trace_id}?format=json",
                 "pdf": f"/api/v1/reports/{trace.trace_id}?format=pdf",
             },
+            intent_classification=trace_dict.get("intent_classification"),
+            geospatial_metrics=trace_dict.get("geospatial_metrics"),
         )
     except HTTPException:
         raise

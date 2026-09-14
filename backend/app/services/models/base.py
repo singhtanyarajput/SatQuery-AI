@@ -281,11 +281,17 @@ class BigEarthNetLoRAFeatureEncoder:
 class LocalVisionLanguageClient:
     """Talks only to loopback / cluster-local serving. Never hits the public internet."""
 
-    def __init__(self) -> None:
-        self.backend = settings.INFERENCE_BACKEND.lower()
-        self.model = settings.VLM_MODEL_NAME
+    def __init__(
+        self,
+        model: str | None = None,
+        backend: str | None = None,
+        ollama_url: str | None = None,
+    ) -> None:
+        self.backend = (backend or settings.INFERENCE_BACKEND).lower()
+        self.model = model or settings.VLM_MODEL_NAME
         self.timeout = 300.0
-        self.ollama_url = settings.resolved_ollama_url
+        self.ollama_url = ollama_url or settings.resolved_ollama_url
+
 
     def generate(
         self,

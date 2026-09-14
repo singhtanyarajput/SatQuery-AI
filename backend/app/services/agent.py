@@ -98,12 +98,23 @@ class SatQueryController:
         self.last_bbox: list[float] | None = None
         self.last_state: dict[str, Any] | None = None
         self.last_alignment: Any | None = None
+        self.last_scratchpad: dict[str, Any] | None = None
+
+        from app.agents.semantic_router import SemanticIntentRouter
+        from app.tools.registry import registry as default_tool_registry
+        from app.services.models.rs_vlm import RemoteSensingVLMClient
+
+        self.router = SemanticIntentRouter()
+        self.tool_registry = default_tool_registry
+        self.rs_vlm = RemoteSensingVLMClient()
+
         try:
             self._graph = compile_satquery_graph(self)
         except Exception as exc:  # noqa: BLE001
             logger.warning("langgraph_compile_failed: %s", exc)
             self._graph = None
         logger.info("Local air-gapped Model Registry successfully mapped [34, 82].")
+
 
     def parse_geotiff_metadata(self, filepath: str, modalities: List[str] | None = None) -> Dict[str, Any]:
         """
@@ -242,6 +253,22 @@ class SatQueryController:
             force_task=force_task,
         )
 
+    def parse_semantic_intent(
+        self,
+        query: str,
+        filepaths: List[str] | None = None,
+        parsed_meta: List[Dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ):
+        """Extract structured semantic intent and dynamic tool plan via router."""
+        return self.router.parse_intent(
+            query=query,
+            filepaths=filepaths,
+            parsed_meta=parsed_meta,
+            force_task=kwargs.get("force_task"),
+        )
+
+
     def execute_workflow(
         self,
         query: str,
@@ -274,14 +301,15 @@ class SatQueryController:
         trace_id = f"ISRO-SQ-2026-{uuid.uuid4().hex[:6].upper()}"
 
         if not filepaths:
-            # Enforce strict input validation via InputInspectorNode before proceeding
-            task = self.classify_query(
-                query,
+            # Enforce strict input validation via SemanticIntentRouter / InputInspectorNode
+            intent = self.router.parse_intent(
+                query=query,
                 filepaths=[],
                 parsed_meta=[],
                 force_task=state.get("force_task"),
             )
-            std_task = STANDARDIZED_TASK_MAP.get(task, "domain_knowledge_qa")
+            task = intent.task
+            std_task = intent.task_type
             logger.info("Initiating text-only agentic workflow: Trace ID %s (task: %s)", trace_id, std_task)
             try:
                 from app.services.models.base import LocalVisionLanguageClient
@@ -318,9 +346,13 @@ class SatQueryController:
                 confidence=confidence,
                 output=output_desc,
                 geojson=None,
+                intent_classification=intent.to_dict(),
+                tools_executed=[],
+                geospatial_metrics=None,
             )
             if self.db:
                 self._persist_trace(trace_log, trace_log.input_metadata)
+
 
             state["file_states"] = {}
             state["parsed_meta"] = []
@@ -359,11 +391,23 @@ class SatQueryController:
             if filepaths:
                 file_states[filepaths[0]] = "validated"
 
-        task = state.get("force_task") or self.classify_query(
-            query,
+        intent = self.router.parse_intent(
+            query=query,
             filepaths=filepaths,
             parsed_meta=parsed_meta,
+            force_task=state.get("force_task"),
         )
+        task = state.get("force_task") or intent.task
+
+        scratchpad: Dict[str, Any] = {
+            "query": query,
+            "filepaths": filepaths,
+            "parsed_meta": parsed_meta,
+            "intent": intent.to_dict(),
+            "use_mobilesam": bool(state.get("use_mobilesam", True)),
+            "intermediate_steps": [],
+        }
+        self.last_scratchpad = scratchpad
 
         # Build execution trace mappings based on classified tasks [94, 95]
         execution_pipeline: List[RegistryExecutionSchema] = []
@@ -415,8 +459,17 @@ class SatQueryController:
         if specialist_confidence is not None:
             confidence = specialist_confidence
 
+        # Calculate geodesic physical measurements if spatial features were extracted
+        if self.last_geojson:
+            scratchpad["grounding_geojson"] = self.last_geojson
+            try:
+                self.tool_registry.execute_tool("geodesic_measurement_tool", scratchpad)
+            except Exception as geo_err:
+                logger.debug("geodesic_measurement_tool_failed: %s", geo_err)
+
         for path in filepaths:
             file_states[path] = "executed"
+
 
         primary_meta = parsed_meta[0] if parsed_meta else {}
         b = primary_meta.get("bounds") if primary_meta and primary_meta.get("bounds") and len(primary_meta["bounds"]) >= 4 else [0.0, 0.0, 0.0, 0.0]
@@ -466,6 +519,9 @@ class SatQueryController:
             confidence=confidence,
             output=output_desc,
             geojson=self.last_geojson,
+            intent_classification=intent.to_dict(),
+            tools_executed=scratchpad.get("intermediate_steps", []),
+            geospatial_metrics=scratchpad.get("geospatial_metrics"),
         )
 
         # Log trace output to local databases [21, 74, 80]
@@ -764,7 +820,7 @@ class SatQueryController:
                         confidence=0.88,
                     )
 
-                vlm = LocalVisionLanguageClient().generate(
+                vlm = self.rs_vlm.generate(
                     prompt=query,
                     image_path=optical,
                     extra_context={
@@ -906,17 +962,23 @@ def compile_satquery_graph(controller: SatQueryController):
     def classify_node(state: FileWorkflowState) -> FileWorkflowState:
         paths = state.get("filepaths") or []
         parsed = state.get("parsed_meta") or []
-        task = state.get("task") or state.get("force_task") or (
-            "domain_knowledge_qa"
-            if not paths
-            else controller.classify_query(
-                state["query"],
-                filepaths=paths,
-                parsed_meta=parsed,
-            )
+        intent = controller.router.parse_intent(
+            state["query"],
+            filepaths=paths,
+            parsed_meta=parsed,
+            force_task=state.get("force_task"),
         )
-        std_task = STANDARDIZED_TASK_MAP.get(task, task)
-        return {**state, "task": task, "task_type": std_task}
+        task = state.get("force_task") or intent.task
+        std_task = intent.task_type
+        return {
+            **state,
+            "task": task,
+            "task_type": std_task,
+            "intent": intent.to_dict(),
+            "target_features": intent.target_features,
+            "tool_chain": intent.tool_chain,
+        }
+
 
     def visual_rendering_node(state: FileWorkflowState) -> FileWorkflowState:
         """Executes computer vision pipelines using the immutable task_type state."""
@@ -952,6 +1014,22 @@ def compile_satquery_graph(controller: SatQueryController):
             use_mobilesam=use_mobilesam,
             parsed_meta=parsed_meta,
         )
+        # Geodesic area calculation on extracted features
+        scratchpad = {
+            "query": query,
+            "filepaths": filepaths,
+            "parsed_meta": parsed_meta,
+            "use_mobilesam": use_mobilesam,
+            "intermediate_steps": list(extra_steps),
+            "grounding_geojson": controller.last_geojson,
+        }
+        if controller.last_geojson:
+            try:
+                controller.tool_registry.execute_tool("geodesic_measurement_tool", scratchpad)
+            except Exception as g_err:
+                logger.debug("geodesic_measurement_tool_failed: %s", g_err)
+        controller.last_scratchpad = scratchpad
+
         return {
             **state,
             "geojson": controller.last_geojson,
@@ -959,7 +1037,10 @@ def compile_satquery_graph(controller: SatQueryController):
             "visual_output": specialist_output or "",
             "confidence": specialist_confidence if specialist_confidence is not None else 0.90,
             "execution_pipeline": extra_steps,
+            "geospatial_metrics": scratchpad.get("geospatial_metrics"),
+            "intermediate_steps": scratchpad.get("intermediate_steps"),
         }
+
 
     def text_generation_node(state: FileWorkflowState) -> FileWorkflowState:
         """Synthesizes comprehensive natural language explanation matching the exact task."""
@@ -1084,6 +1165,9 @@ def compile_satquery_graph(controller: SatQueryController):
             confidence=float(state.get("confidence") or 0.88),
             output=state.get("text_output") or "Analysis completed successfully.",
             geojson=state.get("geojson") or controller.last_geojson,
+            intent_classification=state.get("intent") or (controller.last_scratchpad.get("intent") if controller.last_scratchpad else None),
+            tools_executed=state.get("intermediate_steps") or (controller.last_scratchpad.get("intermediate_steps") if controller.last_scratchpad else None) or [],
+            geospatial_metrics=state.get("geospatial_metrics") or (controller.last_scratchpad.get("geospatial_metrics") if controller.last_scratchpad else None),
         )
 
         if controller.db:

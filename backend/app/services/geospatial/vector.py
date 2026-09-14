@@ -535,16 +535,25 @@ def _geodesic_area_m2(geom_mapping: dict[str, Any] | None) -> float:
         geom = shape(geom_mapping)
         if geom.is_empty:
             return 0.0
-        from pyproj import Geod
-
-        geod = Geod(ellps="WGS84")
-        area, _ = geod.geometry_area_perimeter(geom)
-        return abs(float(area))
-    except Exception:
         try:
-            return abs(float(shape(geom_mapping).area))
-        except Exception:
-            return 0.0
+            from pyproj import Geod
+
+            geod = Geod(ellps="WGS84")
+            area, _ = geod.geometry_area_perimeter(geom)
+            return abs(float(area))
+        except (ImportError, Exception):
+            import math
+
+            bounds = geom.bounds
+            mean_lat = (bounds[1] + bounds[3]) / 2.0
+            if -90 <= mean_lat <= 90 and -180 <= bounds[0] <= 180 and -180 <= bounds[2] <= 180:
+                meters_per_deg_lat = 111132.954 - 559.822 * math.cos(2 * math.radians(mean_lat))
+                meters_per_deg_lon = 111412.84 * math.cos(math.radians(mean_lat))
+                return abs(float(geom.area * meters_per_deg_lat * meters_per_deg_lon))
+            return abs(float(geom.area))
+    except Exception:
+        return 0.0
+
 
 
 def _resize_mask(mask: np.ndarray, width: int, height: int) -> np.ndarray:
