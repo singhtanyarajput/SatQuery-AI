@@ -70,3 +70,8 @@ class QueryResponseEnvelope(BaseModel):
     audit_summary: dict
     trace: dict
     report: dict = Field(default_factory=dict)
+    intent_classification: Optional[dict[str, Any]] = None
+    geospatial_metrics: Optional[dict[str, Any]] = None
+
+
+
