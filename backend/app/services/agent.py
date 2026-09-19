@@ -499,6 +499,12 @@ class SatQueryController:
 
         resolved_modalities = lead_modality + all_base_modalities
 
+        raw_tools = scratchpad.get("intermediate_steps", [])
+        formatted_tools = [
+            t.model_dump() if hasattr(t, "model_dump") else t
+            for t in raw_tools
+        ]
+
         trace_log = AuditableTraceLogSchema(
             trace_id=trace_id,
             task=task,
@@ -520,7 +526,7 @@ class SatQueryController:
             output=output_desc,
             geojson=self.last_geojson,
             intent_classification=intent.to_dict(),
-            tools_executed=scratchpad.get("intermediate_steps", []),
+            tools_executed=formatted_tools,
             geospatial_metrics=scratchpad.get("geospatial_metrics"),
         )
 
@@ -1015,12 +1021,15 @@ def compile_satquery_graph(controller: SatQueryController):
             parsed_meta=parsed_meta,
         )
         # Geodesic area calculation on extracted features
+        dumped_extra_steps = [
+            s.model_dump() if hasattr(s, "model_dump") else s for s in extra_steps
+        ]
         scratchpad = {
             "query": query,
             "filepaths": filepaths,
             "parsed_meta": parsed_meta,
             "use_mobilesam": use_mobilesam,
-            "intermediate_steps": list(extra_steps),
+            "intermediate_steps": list(dumped_extra_steps),
             "grounding_geojson": controller.last_geojson,
         }
         if controller.last_geojson:
@@ -1153,6 +1162,16 @@ def compile_satquery_graph(controller: SatQueryController):
         steps = list(state.get("execution_pipeline") or [])
         models_executed = [step.model for step in steps if step.model]
 
+        raw_tools = (
+            state.get("intermediate_steps")
+            or (controller.last_scratchpad.get("intermediate_steps") if controller.last_scratchpad else None)
+            or []
+        )
+        formatted_tools = [
+            t.model_dump() if hasattr(t, "model_dump") else t
+            for t in raw_tools
+        ]
+
         trace_log = AuditableTraceLogSchema(
             trace_id=trace_id,
             task=task,
@@ -1166,7 +1185,7 @@ def compile_satquery_graph(controller: SatQueryController):
             output=state.get("text_output") or "Analysis completed successfully.",
             geojson=state.get("geojson") or controller.last_geojson,
             intent_classification=state.get("intent") or (controller.last_scratchpad.get("intent") if controller.last_scratchpad else None),
-            tools_executed=state.get("intermediate_steps") or (controller.last_scratchpad.get("intermediate_steps") if controller.last_scratchpad else None) or [],
+            tools_executed=formatted_tools,
             geospatial_metrics=state.get("geospatial_metrics") or (controller.last_scratchpad.get("geospatial_metrics") if controller.last_scratchpad else None),
         )
 

@@ -1,6 +1,6 @@
 """Strict Pydantic v2.6.1 models for auditable SatQuery execution traces."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,13 @@ class RegistryExecutionSchema(BaseModel):
     model: str = Field(..., description="Name of the selected specialist model [68, 71]")
     params: Dict[str, Any] = Field(..., description="Runtime parameter configuration passed to the model [69, 71]")
 
+    def get(self, key: str, default: Any = None) -> Any:
+        if hasattr(self, key):
+            return getattr(self, key)
+        if key == "tool":
+            return self.model
+        return self.params.get(key, default)
+
 
 class AuditableTraceLogSchema(BaseModel):
     trace_id: str = Field(..., description="Unique, trackable session identifier [69, 71]")
@@ -33,6 +40,8 @@ class AuditableTraceLogSchema(BaseModel):
     output: str = Field(..., description="Generated natural language response and spatial mappings [72, 73]")
     geojson: Optional[Dict[str, Any]] = Field(default=None, description="Standard FeatureCollection of discrete instances")
     intent_classification: Optional[Dict[str, Any]] = Field(default=None, description="Semantic intent classification and tool plan")
-    tools_executed: Optional[List[Dict[str, Any]]] = Field(default=None, description="Detailed trace of specialist tools executed")
+    tools_executed: Optional[List[Union[RegistryExecutionSchema, Dict[str, Any]]]] = Field(
+        default=None, description="Detailed trace of specialist tools executed"
+    )
     geospatial_metrics: Optional[Dict[str, Any]] = Field(default=None, description="Real-world geodesic physical measurements (m², ha, km²)")
 
